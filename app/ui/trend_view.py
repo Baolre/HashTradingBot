@@ -9,12 +9,28 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from PySide6.QtCore import Qt, QRect, Signal
+from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
+    QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+)
 
-from ..core.analyzer import PARITY_EVEN, PARITY_ODD, Period
+from ..core.analyzer import PARITY_EVEN, PARITY_ODD, Analyzer, Period
 from .theme import COLOR_BG, COLOR_EVEN, COLOR_ODD, COLOR_PANEL, COLOR_SUB, COLOR_TEXT
+
+
+def _metric(title: str, value_label: QLabel) -> QWidget:
+    w = QWidget()
+    lay = QVBoxLayout(w)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(2)
+    t = QLabel(title)
+    t.setObjectName("sub")
+    t.setStyleSheet(f"color: {COLOR_SUB};")
+    lay.addWidget(t)
+    lay.addWidget(value_label)
+    return w
 
 
 # -------------------- 计数胶囊 --------------------
@@ -82,6 +98,9 @@ class BeadBoard(QWidget):
         self.setMinimumHeight(self.column_max * (self.dot_size + 4) + 20)
         self.setStyleSheet(f"background: {COLOR_BG};")
 
+        # 横向扩展策略，允许在 QScrollArea 中正确显示
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
     # ---------------- 数据刷新 ----------------
     def set_periods(self, periods: List[Period]) -> None:
         """用整段历史重新布局列."""
@@ -113,15 +132,15 @@ class BeadBoard(QWidget):
             self._columns.append([parity])
 
     # ---------------- 尺寸 ----------------
-    def _needed_width(self) -> int:
+    def minimumSizeHint(self):
         cols = max(1, len(self._columns))
         step = self.dot_size + self.column_gap
-        return 20 + cols * step
+        w = 20 + cols * step
+        h = self.column_max * (self.dot_size + 4) + 20
+        return QSize(w, h)
 
     def sizeHint(self):
-        return self.minimumSize().expandedTo(
-            self.minimumSize().__class__(self._needed_width(), self.minimumHeight())
-        )
+        return self.minimumSizeHint()
 
     # ---------------- 绘制 ----------------
     def paintEvent(self, event) -> None:
@@ -214,7 +233,78 @@ class TrendView(QWidget):
 
         # 珠盘
         self.board = BeadBoard(column_max=column_max, dot_size=dot_size, column_gap=column_gap)
-        root.addWidget(self.board, 1)
+
+        # 滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(False)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # 允许垂直滚动
+        scroll.setWidget(self.board)
+        scroll.setStyleSheet(f"QScrollArea {{ background: {COLOR_BG}; border: none; }}")
+
+        # 确保滚动区域可以横向扩展
+        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        scroll.setMinimumHeight(400)
+        root.addWidget(scroll, 10)
+
+        # 底部容器：统计和表格水平排列
+        bottom = QHBoxLayout()
+        bottom.setSpacing(12)
+
+        # 统计指标（左侧，紧凑）
+        grp = QGroupBox("实时统计")
+        grid = QGridLayout(grp)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(6)
+
+        self.lbl_total = QLabel("0")
+        self.lbl_odd = QLabel("0")
+        self.lbl_even = QLabel("0")
+        self.lbl_ratio = QLabel("0% / 0%")
+        self.lbl_streak = QLabel("-")
+        self.lbl_longest_odd = QLabel("0")
+        self.lbl_longest_even = QLabel("0")
+        self.lbl_alt = QLabel("0")
+
+        for lbl in (self.lbl_total, self.lbl_odd, self.lbl_even, self.lbl_ratio,
+                    self.lbl_streak, self.lbl_longest_odd, self.lbl_longest_even, self.lbl_alt):
+            f = lbl.font()
+            f.setPointSize(12)
+            f.setBold(True)
+            lbl.setFont(f)
+
+        self.lbl_odd.setStyleSheet(f"color: {COLOR_ODD};")
+        self.lbl_even.setStyleSheet(f"color: {COLOR_EVEN};")
+
+        grid.addWidget(_metric("总期数", self.lbl_total), 0, 0)
+        grid.addWidget(_metric("单 (总)", self.lbl_odd), 0, 1)
+        grid.addWidget(_metric("双 (总)", self.lbl_even), 0, 2)
+        grid.addWidget(_metric("单/双 占比", self.lbl_ratio), 0, 3)
+        grid.addWidget(_metric("当前连号", self.lbl_streak), 1, 0)
+        grid.addWidget(_metric("最长单连号", self.lbl_longest_odd), 1, 1)
+        grid.addWidget(_metric("最长双连号", self.lbl_longest_even), 1, 2)
+        grid.addWidget(_metric("当前交叉长度", self.lbl_alt), 1, 3)
+
+        grp.setMaximumWidth(500)  # 限制宽度
+        bottom.addWidget(grp)
+
+        # 最近 20 期表（右侧，紧凑）
+        grp2 = QGroupBox("最近 20 期")
+        inner = QVBoxLayout(grp2)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["区块号", "单/双", "末位数字", "区块哈希"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionMode(QTableWidget.NoSelection)
+        self.table.setMaximumHeight(180)  # 紧凑高度
+        inner.addWidget(self.table)
+
+        bottom.addWidget(grp2, 1)
+
+        bottom_widget = QWidget()
+        bottom_widget.setLayout(bottom)
+        root.addWidget(bottom_widget)
 
         # 状态行
         self.status = QLabel("等待启动监控…")
@@ -226,11 +316,67 @@ class TrendView(QWidget):
         self.board.set_periods(periods)
         self.odd_pill.set_count(odd_total)
         self.even_pill.set_count(even_total)
+        self._refresh_stats()
 
     def on_new_period(self, period: Period, odd_total: int, even_total: int) -> None:
         self.board.append(period)
         self.odd_pill.set_count(odd_total)
         self.even_pill.set_count(even_total)
+        self._refresh_stats()
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def refresh(self, analyzer: Analyzer) -> None:
+        """刷新统计数据（供外部调用）."""
+        self._refresh_stats_from_analyzer(analyzer)
+
+    def _refresh_stats(self) -> None:
+        """从珠盘数据刷新统计（简化版）."""
+        # 这个方法仅更新显示，需要外部传入完整analyzer
+        pass
+
+    def _refresh_stats_from_analyzer(self, analyzer: Analyzer) -> None:
+        """从analyzer刷新所有统计."""
+        s = analyzer.stats
+        self.lbl_total.setText(str(s.total))
+        self.lbl_odd.setText(str(s.odd_total))
+        self.lbl_even.setText(str(s.even_total))
+        if s.total:
+            odd_pct = s.odd_total * 100 / s.total
+            even_pct = s.even_total * 100 / s.total
+            self.lbl_ratio.setText(f"{odd_pct:.1f}% / {even_pct:.1f}%")
+        else:
+            self.lbl_ratio.setText("- / -")
+
+        if s.current_streak_parity == PARITY_ODD:
+            self.lbl_streak.setText(f"单 × {s.current_streak_len}")
+            self.lbl_streak.setStyleSheet(f"color: {COLOR_ODD};")
+        elif s.current_streak_parity == PARITY_EVEN:
+            self.lbl_streak.setText(f"双 × {s.current_streak_len}")
+            self.lbl_streak.setStyleSheet(f"color: {COLOR_EVEN};")
+        else:
+            self.lbl_streak.setText("-")
+            self.lbl_streak.setStyleSheet("")
+
+        self.lbl_longest_odd.setText(str(s.longest_odd_streak))
+        self.lbl_longest_even.setText(str(s.longest_even_streak))
+        self.lbl_alt.setText(str(s.current_alternation_len))
+
+        # 表格
+        last = analyzer.last(20)
+        last = list(reversed(last))
+        self.table.setRowCount(len(last))
+        for i, p in enumerate(last):
+            self.table.setItem(i, 0, QTableWidgetItem(str(p.block_number)))
+            label = "单" if p.parity == PARITY_ODD else ("双" if p.parity == PARITY_EVEN else "?")
+            cell = QTableWidgetItem(label)
+            cell.setTextAlignment(Qt.AlignCenter)
+            if p.parity == PARITY_ODD:
+                cell.setForeground(Qt.red)
+            elif p.parity == PARITY_EVEN:
+                cell.setForeground(Qt.green)
+            self.table.setItem(i, 1, cell)
+            self.table.setItem(i, 2, QTableWidgetItem("-" if p.digit is None else str(p.digit)))
+            self.table.setItem(i, 3, QTableWidgetItem(p.block_hash))

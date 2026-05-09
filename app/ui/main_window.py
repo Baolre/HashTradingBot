@@ -17,7 +17,6 @@ from ..utils.logger import get_logger
 from ..utils.notifier import Notifier
 from .alert_panel import AlertPanel
 from .settings_panel import SettingsPanel
-from .stats_panel import StatsPanel
 from .theme import COLOR_EVEN, COLOR_ODD, QSS
 from .trend_view import TrendView
 
@@ -92,12 +91,10 @@ class MainWindow(QMainWindow):
             dot_size=self.cfg.ui.dot_size,
             column_gap=self.cfg.ui.column_gap,
         )
-        self.stats_panel = StatsPanel()
         self.alert_panel = AlertPanel()
         self.settings_panel = SettingsPanel(self.cfg)
 
         self.tabs.addTab(self.trend_view, "走势")
-        self.tabs.addTab(self.stats_panel, "统计")
         self.tabs.addTab(self.alert_panel, "预警")
         self.tabs.addTab(self.settings_panel, "设置")
         root.addWidget(self.tabs, 1)
@@ -153,7 +150,7 @@ class MainWindow(QMainWindow):
             self.analyzer.stats.odd_total,
             self.analyzer.stats.even_total,
         )
-        self.stats_panel.refresh(self.analyzer)
+        self.trend_view.refresh(self.analyzer)
         self.statusBar().showMessage(
             f"最新一期 区块 #{period.block_number}  末位 {period.digit}  "
             f"{'单' if period.parity == 'odd' else '双' if period.parity == 'even' else '?'}"
@@ -192,7 +189,7 @@ class MainWindow(QMainWindow):
             self.analyzer.stats.odd_total,
             self.analyzer.stats.even_total,
         )
-        self.stats_panel.refresh(self.analyzer)
+        self.trend_view.refresh(self.analyzer)
 
     def closeEvent(self, event) -> None:  # noqa: D401
         try:

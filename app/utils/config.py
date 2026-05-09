@@ -53,6 +53,13 @@ class UIConfig:
 
 
 @dataclass
+class BackfillConfig:
+    enabled: bool = True
+    days: int = 7
+    max_blocks_per_run: int = 5000
+
+
+@dataclass
 class AppConfig:
     api: ApiConfig = field(default_factory=ApiConfig)
     filter: FilterConfig = field(default_factory=FilterConfig)
@@ -60,6 +67,7 @@ class AppConfig:
     alert: AlertConfig = field(default_factory=AlertConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     ui: UIConfig = field(default_factory=UIConfig)
+    backfill: BackfillConfig = field(default_factory=BackfillConfig)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AppConfig":
@@ -71,6 +79,7 @@ class AppConfig:
             alert=AlertConfig(**(data.get("alert") or {})),
             storage=StorageConfig(**(data.get("storage") or {})),
             ui=UIConfig(**(data.get("ui") or {})),
+            backfill=BackfillConfig(**(data.get("backfill") or {})),
         )
 
     def to_dict(self) -> Dict[str, Any]:

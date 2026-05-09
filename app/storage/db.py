@@ -112,6 +112,15 @@ class Storage:
             return None
         return int(row["mx"])
 
+    def block_exists(self, block_number: int) -> bool:
+        """检查指定区块是否已存在于数据库中."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM blocks WHERE block_number = ?",
+                (block_number,)
+            ).fetchone()
+            return row is not None
+
     # ------------------- alerts -------------------
     def save_alert(self, kind: str, message: str, block_number: Optional[int] = None) -> int:
         with self._lock:

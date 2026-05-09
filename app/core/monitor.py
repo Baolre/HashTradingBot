@@ -73,6 +73,9 @@ class MonitorWorker(QObject):
         self.status_changed.emit("monitor 已启动")
         logger.info("monitor started")
 
+        # 启动时回填历史数据（方法内部会跳过已存在的区块）
+        self.backfill_historical_week()
+
         while self._running:
             try:
                 self._tick()
@@ -153,6 +156,82 @@ class MonitorWorker(QObject):
         self.block_received.emit(period)
         # 触发预警检查
         self.alerter.check(self.analyzer, period)
+
+    def backfill_historical_week(self) -> None:
+        """回填过去一周的历史数据."""
+        if not self.cfg.backfill.enabled:
+            return
+
+        if not self.cfg.api.trongrid_api_key:
+            self.error_occurred.emit("未配置 TronGrid API Key，无法回填历史数据")
+            return
+
+        self.status_changed.emit("正在获取当前链上高度以计算回填范围...")
+        latest: Optional[BlockInfo] = self._client.get_now_block()
+        if latest is None:
+            self.error_occurred.emit("获取最新区块失败，无法回填历史数据")
+            return
+
+        multiple = max(1, int(self.cfg.filter.block_multiple))
+        days = max(1, int(self.cfg.backfill.days))
+        max_blocks = max(100, int(self.cfg.backfill.max_blocks_per_run))
+
+        # TRON 约 3 秒一区块
+        blocks_per_day = 24 * 60 * 60 // 3
+        total_blocks = days * blocks_per_day
+
+        target_high = (latest.number // multiple) * multiple
+        target_low = ((latest.number - total_blocks) // multiple) * multiple
+        if target_low < multiple:
+            target_low = multiple
+
+        # 限制单次回填数量
+        estimated_count = (target_high - target_low) // multiple + 1
+        if estimated_count > max_blocks:
+            target_low = target_high - (max_blocks - 1) * multiple
+            logger.info("回填范围过大，限制为 %d 个区块", max_blocks)
+
+        self.status_changed.emit(
+            f"开始回填历史数据: #{target_low} ~ #{target_high} (共 {estimated_count} 个 20 倍数块)"
+        )
+        logger.info("开始历史回填: %d ~ %d", target_low, target_high)
+
+        processed = 0
+        skipped = 0
+        n = target_low
+        while n <= target_high and self._running:
+            # 检查是否已存在
+            if self.analyzer.contains_block(n):
+                skipped += 1
+                n += multiple
+                continue
+            if self.storage is not None and self.storage.block_exists(n):
+                skipped += 1
+                n += multiple
+                continue
+
+            # 获取并处理区块
+            self._process_block_number(n)
+            processed += 1
+
+            # 每处理 50 个更新一次状态
+            if processed % 50 == 0:
+                self.status_changed.emit(
+                    f"回填进度: {processed}/{estimated_count} (跳过 {skipped})"
+                )
+
+            n += multiple
+
+            # 轻微延迟，避免 API 压力过大
+            time.sleep(0.3)
+
+        if self._running:
+            self.status_changed.emit(
+                f"历史回填完成: 新增 {processed} 个，跳过 {skipped} 个"
+            )
+            logger.info("历史回填完成: 新增 %d，跳过 %d", processed, skipped)
+        else:
+            logger.info("历史回填被中断: 已处理 %d，跳过 %d", processed, skipped)
 
 
 class MonitorController(QObject):
