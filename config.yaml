@@ -36,6 +36,14 @@ storage:
   # SQLite 文件路径
   db_path: "data/hash_trading.db"
 
+backfill:
+  # 启动监控时自动从链上回补历史数据
+  enabled: true
+  # 回补多少天的数据（首次启动时按此估算起点；断点续跑时忽略）
+  days: 3
+  # 单次补齐最多取多少期，防止一口气打挂
+  max_blocks_per_run: 2000
+
 ui:
   # 走势图一列最多堆叠圆珠数（超过则换列）
   column_max: 6

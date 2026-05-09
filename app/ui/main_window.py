@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         self.monitor.alert_triggered.connect(self._on_alert)
         self.monitor.status_changed.connect(self._on_status)
         self.monitor.error_occurred.connect(self._on_error)
+        self.monitor.backfill_progress.connect(self._on_backfill_progress)
         self.settings_panel.saved.connect(self._on_settings_saved)
         self.sim_panel.btn_start.clicked.connect(self._sim_start)
         self.sim_panel.btn_stop.clicked.connect(self._sim_stop)
@@ -237,6 +238,19 @@ class MainWindow(QMainWindow):
 
     def _on_status(self, text):
         self.trend_view.set_status(text)
+
+    def _on_backfill_progress(self, done: int, total: int):
+        """补齐进度条，结束后全量刷新一次 UI."""
+        if total <= 0:
+            return
+        pct = int(done * 100 / total)
+        self.statusBar().showMessage(f"历史补齐: {done}/{total} ({pct}%)")
+        if done >= total:
+            # 补齐完成后做一次全量 UI 刷新
+            try:
+                self._refresh_all()
+            except Exception:
+                pass
 
     def _on_error(self, text):
         self._set_network(False)

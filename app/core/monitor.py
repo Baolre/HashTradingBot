@@ -23,6 +23,7 @@ class MonitorWorker(QObject):
     alert_triggered = Signal(object)  # AlertEvent
     status_changed = Signal(str)      # 文本状态
     error_occurred = Signal(str)
+    backfill_progress = Signal(int, int)  # done, total
     stopped = Signal()
 
     def __init__(self, cfg: AppConfig, analyzer: Analyzer, alerter: Alerter, storage=None):
@@ -73,6 +74,14 @@ class MonitorWorker(QObject):
         self.status_changed.emit("monitor 已启动")
         logger.info("monitor started")
 
+        # 启动时自动补齐（按 BackfillConfig；若 backfill 未启用则跳过）
+        try:
+            if getattr(self.cfg, "backfill", None) and self.cfg.backfill.enabled:
+                self._backfill()
+        except Exception as e:  # noqa: BLE001
+            logger.exception("backfill error")
+            self.error_occurred.emit(f"历史补齐失败: {e}")
+
         while self._running:
             try:
                 self._tick()
@@ -91,6 +100,67 @@ class MonitorWorker(QObject):
         logger.info("monitor stopped")
         self.stopped.emit()
 
+    # ------------------- 历史补齐 -------------------
+    def _backfill(self) -> None:
+        """启动时从链上回补历史。
+        - 若 analyzer 里已有历史：补齐 _last_processed 之后到 target_high 之间的所有倍数块
+        - 若没有历史：按 backfill.days 估算需要多少期（TRON 出块 ~3s），最多 max_blocks_per_run
+        """
+        if not self.cfg.api.trongrid_api_key:
+            self.error_occurred.emit("未配置 API Key，跳过历史补齐")
+            return
+
+        multiple = max(1, int(self.cfg.filter.block_multiple))
+        latest: Optional[BlockInfo] = self._client.get_now_block()
+        if latest is None:
+            self.error_occurred.emit("获取最新区块失败，无法补齐")
+            return
+        target_high = (latest.number // multiple) * multiple
+        if target_high < multiple:
+            return
+
+        max_blocks = max(1, int(self.cfg.backfill.max_blocks_per_run))
+        days = max(0, int(self.cfg.backfill.days))
+
+        if self._last_processed is None:
+            # 首次运行：按 days 估算要补的期数
+            # 每 multiple 块一期；TRON 出块约 3s → 每天约 86400/3/multiple 期
+            periods_per_day = max(1, 86400 // 3 // multiple)
+            want_periods = days * periods_per_day if days > 0 else max_blocks
+            want_periods = min(want_periods, max_blocks)
+            start = target_high - (want_periods - 1) * multiple
+            if start < multiple:
+                start = multiple
+        else:
+            # 断点续跑
+            start = self._last_processed + multiple
+            total_periods = max(0, (target_high - self._last_processed) // multiple)
+            if total_periods > max_blocks:
+                start = target_high - (max_blocks - 1) * multiple
+                logger.info("补齐超过 max=%s 期，跳过较早区块，从 #%s 开始", max_blocks, start)
+
+        if start > target_high:
+            return
+
+        total = (target_high - start) // multiple + 1
+        self.status_changed.emit(f"正在补齐历史: 共 {total} 期（#{start} ~ #{target_high}）")
+        self.backfill_progress.emit(0, total)
+
+        n = start
+        done = 0
+        while n <= target_high and self._running:
+            self._process_block_number(n)
+            self._last_processed = n
+            done += 1
+            # 每 10 期推送一次进度，减少信号抖动
+            if done % 10 == 0 or done == total:
+                self.backfill_progress.emit(done, total)
+                self.status_changed.emit(f"补齐进度 {done}/{total}")
+            n += multiple
+
+        self.backfill_progress.emit(done, total)
+        self.status_changed.emit(f"历史补齐完成: {done}/{total} 期")
+
     # ------------------- 单次轮询 -------------------
     def _tick(self) -> None:
         if not self.cfg.api.trongrid_api_key:
@@ -107,25 +177,22 @@ class MonitorWorker(QObject):
         )
 
         multiple = max(1, int(self.cfg.filter.block_multiple))
-        # 我们补齐从 _last_processed+multiple 到 latest 之间的所有 20 倍数块
-        # 初次运行仅取最近的一个满足条件的区块（避免回扫太多）
         target_high = (latest.number // multiple) * multiple
         if target_high < multiple:
             return
 
         if self._last_processed is None:
-            # 首次运行：仅取最近的一个满足条件的区块，避免一口气回扫太多
+            # backfill 被禁用或失败时的兜底：仅取最近一期
             self._process_block_number(target_high)
             self._last_processed = target_high
             return
 
-        # 正常/断点续跑：按顺序补齐 _last_processed 之后的所有 20 倍数块
-        # 如果 last_processed 太旧导致需要补齐的太多，限制最多 50 个以防拖慢
+        # 正常补齐 last_processed 之后的所有倍数块，限制一轮最多 50 个以防拖慢
         n = self._last_processed + multiple
         gap = (target_high - self._last_processed) // multiple
-        if gap > 5000:
-            n = target_high - 5000 * multiple + multiple
-            logger.info("追赶过多，跳过较早区块，从 #%s 开始补齐", n)
+        if gap > 50:
+            n = target_high - 50 * multiple + multiple
+            logger.info("单轮追赶过多，跳过较早区块，从 #%s 开始", n)
         while n <= target_high and self._running:
             self._process_block_number(n)
             self._last_processed = n
@@ -162,6 +229,7 @@ class MonitorController(QObject):
     alert_triggered = Signal(object)
     status_changed = Signal(str)
     error_occurred = Signal(str)
+    backfill_progress = Signal(int, int)
 
     def __init__(self, cfg: AppConfig, analyzer: Analyzer, alerter: Alerter, storage=None):
         super().__init__()
@@ -187,6 +255,7 @@ class MonitorController(QObject):
         self._worker.alert_triggered.connect(self.alert_triggered)
         self._worker.status_changed.connect(self.status_changed)
         self._worker.error_occurred.connect(self.error_occurred)
+        self._worker.backfill_progress.connect(self.backfill_progress)
 
         self._thread.started.connect(self._worker.run)
         self._worker.stopped.connect(self._thread.quit)
