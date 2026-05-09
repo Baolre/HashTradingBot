@@ -265,24 +265,56 @@ class TrendView(QWidget):
         self.lbl_alt.setText(str(s.current_alternation_len))
 
     def update_ai_signal(self, prediction) -> None:
-        """更新 AI 信号横幅（含预测区块号）."""
-        if prediction is None or not prediction.has_signal:
-            self._ai_label.setText("AI: 暂无高置信度信号")
+        """更新 AI 信号横幅（含预测区块号，带字段防御）."""
+        if prediction is None:
+            self._ai_label.setText("AI: 等待首批数据...")
             self._ai_label.setStyleSheet(
                 f"color: {COLOR_SUB}; font-size: 12px; padding: 6px 10px; "
                 f"background: #1C232C; border-radius: 4px;"
             )
             return
 
-        signal = prediction.best
-        color = COLOR_ODD if signal.prediction == "odd" else COLOR_EVEN
-        block_num = signal.next_block_number or prediction.next_block_number or 0
+        best = getattr(prediction, "best", None)
+        has_signal = bool(getattr(prediction, "has_signal", False))
+        reason = getattr(prediction, "reason", "") or ""
+
+        # 即便没有高置信度，也展示当前预测方向和置信度（灰色显示）
+        if best is None:
+            text = f"AI: 暂无预测（{reason})" if reason else "AI: 暂无预测"
+            self._ai_label.setText(text)
+            self._ai_label.setStyleSheet(
+                f"color: {COLOR_SUB}; font-size: 12px; padding: 6px 10px; "
+                f"background: #1C232C; border-radius: 4px;"
+            )
+            return
+
+        label = getattr(best, "label", "?")
+        confidence_pct = getattr(best, "confidence_pct", "-")
+        model = getattr(best, "model", "-")
+        prediction_dir = getattr(best, "prediction", "")
+        block_num = (
+            getattr(best, "next_block_number", None)
+            or getattr(prediction, "next_block_number", None)
+            or 0
+        )
         block_text = f" | 预测区块 #{block_num}" if block_num else ""
-        self._ai_label.setText(
-            f"AI 预测下期: {signal.label} | 置信度 {signal.confidence_pct} | "
-            f"{signal.model}{block_text}"
-        )
-        self._ai_label.setStyleSheet(
-            f"color: {color}; font-size: 12px; font-weight: bold; padding: 6px 10px; "
-            f"background: #1C232C; border: 1px solid {color}; border-radius: 4px;"
-        )
+
+        if has_signal:
+            color = COLOR_ODD if prediction_dir == "odd" else COLOR_EVEN
+            self._ai_label.setText(
+                f"AI 预测下期: {label} | 置信度 {confidence_pct} | {model}{block_text}"
+            )
+            self._ai_label.setStyleSheet(
+                f"color: {color}; font-size: 12px; font-weight: bold; padding: 6px 10px; "
+                f"background: #1C232C; border: 1px solid {color}; border-radius: 4px;"
+            )
+        else:
+            # 低置信度：也显示出来，但用灰色提示
+            note = f" ({reason})" if reason else ""
+            self._ai_label.setText(
+                f"AI 观察中: 倾向 {label} | 置信度 {confidence_pct}{note}"
+            )
+            self._ai_label.setStyleSheet(
+                f"color: {COLOR_SUB}; font-size: 12px; padding: 6px 10px; "
+                f"background: #1C232C; border-radius: 4px;"
+            )

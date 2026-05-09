@@ -276,10 +276,10 @@ class MainWindow(QMainWindow):
         self.trend_view.refresh(self.analyzer)
         self.data_table.refresh(self.analyzer)
         self.lbl_total.setText(f"{s.total} 期")
-        if s.total > 15:
-            self._last_prediction = self.predictor.predict(self.analyzer)
-            self.prob_panel.refresh(self.analyzer, self._last_prediction)
-            self.trend_view.update_ai_signal(self._last_prediction)
+        # 总是调用预测器，让用户立刻看到"观察中"反馈；Predictor 内部自己判断数据是否足够
+        self._last_prediction = self.predictor.predict(self.analyzer)
+        self.prob_panel.refresh(self.analyzer, self._last_prediction)
+        self.trend_view.update_ai_signal(self._last_prediction)
 
     def closeEvent(self, event):
         self._countdown_timer.stop()
