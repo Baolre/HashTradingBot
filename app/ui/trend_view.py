@@ -68,7 +68,12 @@ class CountPill(QFrame):
 
 
 class BeadBoard(QWidget):
-    """红绿圆珠走势盘 - 最新在右侧."""
+    """红绿圆珠走势盘 - 最新在最右侧，旧数据向左推出.
+
+    实现：
+    - 宽度 = max(视口宽度, 列数 * step)，保证列少时也贴右侧（视口满）
+    - 绘制方向：从最右开始画最新列（ci=0 => 最右），越旧越靠左
+    """
 
     def __init__(self, column_max: int = 6, dot_size: int = 30, column_gap: int = 6, parent=None):
         super().__init__(parent)
@@ -77,8 +82,16 @@ class BeadBoard(QWidget):
         self.column_gap = max(2, column_gap)
         self._columns: List[List[str]] = []
         self._min_height = self.column_max * (self.dot_size + 4) + 20
+        # 可视上限：保留最近 N 列，避免长期运行后宽度爆炸
+        self._visible_columns = 500
+        self._viewport_width = 400  # 由外层 ScrollArea 告知
         self.setMinimumHeight(self._min_height)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+
+    def set_viewport_width(self, w: int) -> None:
+        self._viewport_width = max(100, int(w))
+        self._update_size()
+        self.update()
 
     def set_periods(self, periods: List[Period]) -> None:
         self._columns = []
@@ -105,9 +118,12 @@ class BeadBoard(QWidget):
             self._columns.append([parity])
 
     def _update_size(self) -> None:
-        cols = max(1, len(self._columns))
         step = self.dot_size + self.column_gap
-        self.setFixedSize(20 + cols * step, self._min_height)
+        cols = max(1, len(self._columns))
+        content_w = 20 + cols * step
+        # 内容宽度不足视口时，撑到视口宽度，让"最新珠"贴在视口最右
+        w = max(content_w, self._viewport_width)
+        self.setFixedSize(w, self._min_height)
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
@@ -119,10 +135,15 @@ class BeadBoard(QWidget):
             return
         step_x = self.dot_size + self.column_gap
         step_y = self.dot_size + 4
-        x0 = 10
+        # 右对齐：从 widget 最右开始向左画
+        x_right = self.width() - 10 - self.dot_size
         y_base = self.height() - 10 - self.dot_size
-        for ci, col in enumerate(self._columns):
-            x = x0 + ci * step_x
+        visible = self._columns[-self._visible_columns:]
+        # 倒序遍历：i=0 画最新列（最右），i 越大越靠左
+        for i, col in enumerate(reversed(visible)):
+            x = x_right - i * step_x
+            if x < -step_x:  # 超出左边界不再画
+                break
             for ri, parity in enumerate(col):
                 y = y_base - ri * step_y
                 color = QColor(COLOR_ODD if parity == PARITY_ODD else COLOR_EVEN)
@@ -175,12 +196,14 @@ class TrendView(QWidget):
         self.board = BeadBoard(column_max=column_max, dot_size=dot_size, column_gap=column_gap)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(False)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setWidget(self.board)
         self.scroll.setStyleSheet(f"QScrollArea {{ background: {COLOR_BG}; border: none; }}")
         self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.scroll.setMinimumHeight(self.board._min_height + 20)
+        # 视口大小变化时同步到 board，让它始终撑满右侧
+        self.scroll.viewport().installEventFilter(self)
         root.addWidget(self.scroll, 1)
 
         # ===== 统计区 =====
@@ -222,18 +245,30 @@ class TrendView(QWidget):
 
     # ==================== 公开方法 ====================
 
+    def eventFilter(self, obj, event):
+        """同步视口宽度到 BeadBoard，让列数少时也能右对齐."""
+        if obj is self.scroll.viewport() and event.type() == event.Type.Resize:
+            self.board.set_viewport_width(self.scroll.viewport().width())
+            self._scroll_to_right()
+        return super().eventFilter(obj, event)
+
     def _scroll_to_right(self) -> None:
-        QTimer.singleShot(50, lambda: self.scroll.horizontalScrollBar().setValue(
-            self.scroll.horizontalScrollBar().maximum()
-        ))
+        # 两次延迟：让 layout / sizeHint 先结算，再滚到最右
+        def _go():
+            bar = self.scroll.horizontalScrollBar()
+            bar.setValue(bar.maximum())
+        QTimer.singleShot(0, _go)
+        QTimer.singleShot(80, _go)
 
     def apply_periods(self, periods: List[Period], odd_total: int, even_total: int) -> None:
+        self.board.set_viewport_width(self.scroll.viewport().width())
         self.board.set_periods(periods)
         self.odd_pill.set_count(odd_total)
         self.even_pill.set_count(even_total)
         self._scroll_to_right()
 
     def on_new_period(self, period: Period, odd_total: int, even_total: int) -> None:
+        self.board.set_viewport_width(self.scroll.viewport().width())
         self.board.append(period)
         self.odd_pill.set_count(odd_total)
         self.even_pill.set_count(even_total)
