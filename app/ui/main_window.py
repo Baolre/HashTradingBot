@@ -234,8 +234,6 @@ class MainWindow(QMainWindow):
             self.notifier.toast("预警", event.message)
         if self.cfg.alert.sound_enabled:
             self.notifier.beep()
-        self.notifier.push_to_phone(f"预警: {event.kind}",
-                                     f"{event.message}\n区块 #{event.block_number or '-'}", block_url)
 
     def _on_status(self, text):
         self.trend_view.set_status(text)
