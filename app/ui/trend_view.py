@@ -1,19 +1,14 @@
-"""连珠走势图 - 参考截图中"区块走势"样式.
-
-规则:
-- 每列最多堆 column_max 个圆珠
-- 来了新一期：若与当前列最顶同色则向上叠；否则开新列从底部开始
-- 红 = 单 odd，绿 = 双 even；unknown 跳过
-"""
+"""连珠走势图 - 修复: 支持左右滚动 + 最新在右侧 + 自动滚到最右."""
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List
 
-from PySide6.QtCore import Qt, QRect, QSize, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush
+from PySide6.QtCore import Qt, QRect, QSize, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QBrush
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+    QScrollArea, QScrollBar, QSizePolicy, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 from ..core.analyzer import PARITY_EVEN, PARITY_ODD, Analyzer, Period
@@ -33,10 +28,7 @@ def _metric(title: str, value_label: QLabel) -> QWidget:
     return w
 
 
-# -------------------- 计数胶囊 --------------------
 class CountPill(QFrame):
-    """类似截图中的 [双 96] / [单 104] 胶囊."""
-
     def __init__(self, label: str, color: str, parent=None):
         super().__init__(parent)
         self._label = label
@@ -49,32 +41,24 @@ class CountPill(QFrame):
         self._count = n
         self.update()
 
-    def paintEvent(self, event) -> None:  # noqa: D401
+    def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         rect = self.rect().adjusted(1, 1, -1, -1)
         radius = rect.height() / 2
-
-        # 背景
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(QColor(COLOR_PANEL)))
         p.drawRoundedRect(rect, radius, radius)
-
-        # 左侧色点
         dot_r = rect.height() - 10
         dot_rect = QRect(rect.left() + 6, rect.top() + 5, dot_r, dot_r)
         p.setBrush(QBrush(QColor(self._color)))
         p.drawEllipse(dot_rect)
-
-        # 文字: 标签
         font = QFont(self.font())
         font.setPointSize(10)
         p.setFont(font)
         p.setPen(QColor("#FFFFFF"))
         label_rect = QRect(dot_rect.right() + 8, rect.top(), 28, rect.height())
         p.drawText(label_rect, Qt.AlignVCenter | Qt.AlignLeft, self._label)
-
-        # 文字: 数字
         num_font = QFont(self.font())
         num_font.setPointSize(12)
         num_font.setBold(True)
@@ -85,38 +69,35 @@ class CountPill(QFrame):
         p.drawText(num_rect, Qt.AlignVCenter | Qt.AlignLeft, str(self._count))
 
 
-# -------------------- 珠盘 --------------------
 class BeadBoard(QWidget):
-    """红绿圆珠走势盘."""
+    """红绿圆珠走势盘 - 最新在右侧，旧的在左侧."""
 
     def __init__(self, column_max: int = 6, dot_size: int = 30, column_gap: int = 6, parent=None):
         super().__init__(parent)
         self.column_max = max(3, column_max)
         self.dot_size = max(18, dot_size)
         self.column_gap = max(2, column_gap)
-        self._columns: List[List[str]] = []   # 每列是 parity 列表，["odd", "odd"]
-        self.setMinimumHeight(self.column_max * (self.dot_size + 4) + 20)
+        self._columns: List[List[str]] = []
+        self._min_height = self.column_max * (self.dot_size + 4) + 20
+        self.setMinimumHeight(self._min_height)
         self.setStyleSheet(f"background: {COLOR_BG};")
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-        # 横向扩展策略，允许在 QScrollArea 中正确显示
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-    # ---------------- 数据刷新 ----------------
     def set_periods(self, periods: List[Period]) -> None:
-        """用整段历史重新布局列."""
         self._columns = []
         for p in periods:
             self._push(p.parity)
-        self.updateGeometry()
+        self._update_size()
         self.update()
 
     def append(self, period: Period) -> None:
         self._push(period.parity)
-        self.updateGeometry()
+        self._update_size()
         self.update()
 
     def clear(self) -> None:
         self._columns = []
+        self._update_size()
         self.update()
 
     def _push(self, parity: str) -> None:
@@ -131,18 +112,21 @@ class BeadBoard(QWidget):
         else:
             self._columns.append([parity])
 
-    # ---------------- 尺寸 ----------------
-    def minimumSizeHint(self):
+    def _update_size(self) -> None:
         cols = max(1, len(self._columns))
         step = self.dot_size + self.column_gap
         w = 20 + cols * step
-        h = self.column_max * (self.dot_size + 4) + 20
-        return QSize(w, h)
+        h = self._min_height
+        self.setFixedSize(w, h)
+
+    def minimumSizeHint(self):
+        cols = max(1, len(self._columns))
+        step = self.dot_size + self.column_gap
+        return QSize(20 + cols * step, self._min_height)
 
     def sizeHint(self):
         return self.minimumSizeHint()
 
-    # ---------------- 绘制 ----------------
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -156,7 +140,6 @@ class BeadBoard(QWidget):
         step_x = self.dot_size + self.column_gap
         step_y = self.dot_size + 4
         x0 = 10
-        # 底部对齐：最新的珠永远贴底
         y_base = self.height() - 10 - self.dot_size
 
         for ci, col in enumerate(self._columns):
@@ -167,8 +150,6 @@ class BeadBoard(QWidget):
                 p.setPen(Qt.NoPen)
                 p.setBrush(QBrush(color))
                 p.drawEllipse(x, y, self.dot_size, self.dot_size)
-
-                # 文字
                 font = QFont(self.font())
                 font.setPointSize(10)
                 font.setBold(True)
@@ -178,9 +159,8 @@ class BeadBoard(QWidget):
                 p.drawText(rect, Qt.AlignCenter, "单" if parity == PARITY_ODD else "双")
 
 
-# -------------------- 顶部容器：标题 + 胶囊 + 珠盘 --------------------
 class TrendView(QWidget):
-    """外层容器."""
+    """走势面板 - 最新在右侧，支持左右滚动，自动滚到最右."""
 
     refresh_requested = Signal()
 
@@ -206,10 +186,9 @@ class TrendView(QWidget):
         top.addWidget(self.even_pill)
         top.addSpacing(8)
         top.addWidget(self.odd_pill)
-
         root.addLayout(top)
 
-        # 子标签按钮（纯样式，参考截图）
+        # 子标签
         tab_bar = QHBoxLayout()
         tab_bar.setContentsMargins(0, 0, 0, 0)
         btn_a = QPushButton("区块走势")
@@ -219,7 +198,7 @@ class TrendView(QWidget):
         btn_b = QPushButton("我的走势")
         btn_b.setCheckable(True)
         btn_b.setFixedHeight(26)
-        btn_b.setEnabled(False)  # 先占位
+        btn_b.setEnabled(False)
         for b in (btn_a, btn_b):
             b.setStyleSheet(
                 f"QPushButton {{ border-radius: 13px; padding: 2px 14px; "
@@ -231,27 +210,23 @@ class TrendView(QWidget):
         tab_bar.addStretch()
         root.addLayout(tab_bar)
 
-        # 珠盘
+        # 珠盘 + 滚动区域
         self.board = BeadBoard(column_max=column_max, dot_size=dot_size, column_gap=column_gap)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(False)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setWidget(self.board)
+        self.scroll.setStyleSheet(f"QScrollArea {{ background: {COLOR_BG}; border: none; }}")
+        self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.scroll.setMinimumHeight(self.board._min_height + 20)
+        root.addWidget(self.scroll, 10)
 
-        # 滚动区域
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(False)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # 允许垂直滚动
-        scroll.setWidget(self.board)
-        scroll.setStyleSheet(f"QScrollArea {{ background: {COLOR_BG}; border: none; }}")
-
-        # 确保滚动区域可以横向扩展
-        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        scroll.setMinimumHeight(400)
-        root.addWidget(scroll, 10)
-
-        # 底部容器：统计和表格水平排列
+        # 底部：统计 + 表格
         bottom = QHBoxLayout()
         bottom.setSpacing(12)
 
-        # 统计指标（左侧，紧凑）
+        # 统计
         grp = QGroupBox("实时统计")
         grid = QGridLayout(grp)
         grid.setHorizontalSpacing(16)
@@ -268,10 +243,10 @@ class TrendView(QWidget):
 
         for lbl in (self.lbl_total, self.lbl_odd, self.lbl_even, self.lbl_ratio,
                     self.lbl_streak, self.lbl_longest_odd, self.lbl_longest_even, self.lbl_alt):
-            f = lbl.font()
-            f.setPointSize(12)
-            f.setBold(True)
-            lbl.setFont(f)
+            f2 = lbl.font()
+            f2.setPointSize(12)
+            f2.setBold(True)
+            lbl.setFont(f2)
 
         self.lbl_odd.setStyleSheet(f"color: {COLOR_ODD};")
         self.lbl_even.setStyleSheet(f"color: {COLOR_EVEN};")
@@ -284,11 +259,10 @@ class TrendView(QWidget):
         grid.addWidget(_metric("最长单连号", self.lbl_longest_odd), 1, 1)
         grid.addWidget(_metric("最长双连号", self.lbl_longest_even), 1, 2)
         grid.addWidget(_metric("当前交叉长度", self.lbl_alt), 1, 3)
-
-        grp.setMaximumWidth(500)  # 限制宽度
+        grp.setMaximumWidth(500)
         bottom.addWidget(grp)
 
-        # 最近 20 期表（右侧，紧凑）
+        # 表格
         grp2 = QGroupBox("最近 20 期")
         inner = QVBoxLayout(grp2)
         self.table = QTableWidget(0, 4)
@@ -297,9 +271,8 @@ class TrendView(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionMode(QTableWidget.NoSelection)
-        self.table.setMaximumHeight(180)  # 紧凑高度
+        self.table.setMaximumHeight(180)
         inner.addWidget(self.table)
-
         bottom.addWidget(grp2, 1)
 
         bottom_widget = QWidget()
@@ -311,34 +284,31 @@ class TrendView(QWidget):
         self.status.setObjectName("sub")
         root.addWidget(self.status)
 
-    # ---------------- 对外 ----------------
+    def _scroll_to_right(self) -> None:
+        """自动滚到最右（最新数据）."""
+        QTimer.singleShot(50, lambda: self.scroll.horizontalScrollBar().setValue(
+            self.scroll.horizontalScrollBar().maximum()
+        ))
+
     def apply_periods(self, periods: List[Period], odd_total: int, even_total: int) -> None:
         self.board.set_periods(periods)
         self.odd_pill.set_count(odd_total)
         self.even_pill.set_count(even_total)
-        self._refresh_stats()
+        self._scroll_to_right()
 
     def on_new_period(self, period: Period, odd_total: int, even_total: int) -> None:
         self.board.append(period)
         self.odd_pill.set_count(odd_total)
         self.even_pill.set_count(even_total)
-        self._refresh_stats()
+        self._scroll_to_right()
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def refresh(self, analyzer: Analyzer) -> None:
-        """刷新统计数据（供外部调用）."""
         self._refresh_stats_from_analyzer(analyzer)
 
-    def _refresh_stats(self) -> None:
-        """从珠盘数据刷新统计（简化版）."""
-        # 这个方法仅更新显示，需要外部传入完整analyzer
-        pass
-
     def _refresh_stats_from_analyzer(self, analyzer: Analyzer) -> None:
-        """从analyzer刷新所有统计."""
         s = analyzer.stats
         self.lbl_total.setText(str(s.total))
         self.lbl_odd.setText(str(s.odd_total))

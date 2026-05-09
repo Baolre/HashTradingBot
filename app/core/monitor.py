@@ -158,7 +158,11 @@ class MonitorWorker(QObject):
         self.alerter.check(self.analyzer, period)
 
     def backfill_historical_week(self) -> None:
-        """回填过去一周的历史数据."""
+        """回填过去 N 天的历史数据.
+
+        关键改进: 从数据库中读取已有最大区块号，只回填比它更旧且缺失的部分。
+        如果数据库里已有数据覆盖了回填范围，则跳过不再重复请求。
+        """
         if not self.cfg.backfill.enabled:
             return
 
@@ -185,14 +189,27 @@ class MonitorWorker(QObject):
         if target_low < multiple:
             target_low = multiple
 
+        # 检查数据库已有的最大区块号，如果已经覆盖了 target_high，则无需回填
+        db_latest = None
+        if self.storage is not None:
+            db_latest = self.storage.latest_block_number()
+
+        if db_latest is not None and db_latest >= target_high:
+            self.status_changed.emit(
+                f"数据库已有数据到 #{db_latest}，无需回填"
+            )
+            logger.info("数据库已覆盖回填范围 (db_latest=%d >= target_high=%d)，跳过", db_latest, target_high)
+            return
+
         # 限制单次回填数量
         estimated_count = (target_high - target_low) // multiple + 1
         if estimated_count > max_blocks:
             target_low = target_high - (max_blocks - 1) * multiple
+            estimated_count = max_blocks
             logger.info("回填范围过大，限制为 %d 个区块", max_blocks)
 
         self.status_changed.emit(
-            f"开始回填历史数据: #{target_low} ~ #{target_high} (共 {estimated_count} 个 20 倍数块)"
+            f"开始回填历史数据: #{target_low} ~ #{target_high} (约 {estimated_count} 个块)"
         )
         logger.info("开始历史回填: %d ~ %d", target_low, target_high)
 
@@ -200,11 +217,12 @@ class MonitorWorker(QObject):
         skipped = 0
         n = target_low
         while n <= target_high and self._running:
-            # 检查是否已存在
+            # 先检查内存中是否已存在
             if self.analyzer.contains_block(n):
                 skipped += 1
                 n += multiple
                 continue
+            # 再检查数据库是否已存在
             if self.storage is not None and self.storage.block_exists(n):
                 skipped += 1
                 n += multiple
@@ -214,15 +232,12 @@ class MonitorWorker(QObject):
             self._process_block_number(n)
             processed += 1
 
-            # 每处理 50 个更新一次状态
             if processed % 50 == 0:
                 self.status_changed.emit(
                     f"回填进度: {processed}/{estimated_count} (跳过 {skipped})"
                 )
 
             n += multiple
-
-            # 轻微延迟，避免 API 压力过大
             time.sleep(0.3)
 
         if self._running:
