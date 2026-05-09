@@ -234,3 +234,38 @@ class TrendView(QWidget):
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)
+
+
+    def refresh(self, analyzer) -> None:
+        """Placeholder for compatibility - stats shown elsewhere."""
+        pass
+
+    def update_ai_signal(self, prediction) -> None:
+        """在走势页底部显示 AI 信号摘要（含预测区块号）."""
+        if not hasattr(self, '_ai_label'):
+            self._ai_label = QLabel("AI: 等待信号...")
+            self._ai_label.setStyleSheet(
+                f"color: {COLOR_SUB}; font-size: 12px; padding: 4px 8px; "
+                f"background: #1C232C; border-radius: 4px;"
+            )
+            self.layout().insertWidget(self.layout().count() - 1, self._ai_label)
+
+        if prediction is None or not prediction.has_signal:
+            self._ai_label.setText("AI: 暂无高置信度信号")
+            self._ai_label.setStyleSheet(
+                "color: #8B949E; font-size: 12px; padding: 4px 8px; "
+                "background: #1C232C; border-radius: 4px;"
+            )
+            return
+
+        signal = prediction.best
+        color = COLOR_ODD if signal.prediction == "odd" else COLOR_EVEN
+        block_num = signal.next_block_number or prediction.next_block_number or 0
+        block_text = f" | 预测区块 #{block_num}" if block_num else ""
+        self._ai_label.setText(
+            f"AI 信号: 预测下期 {signal.label} | 置信度 {signal.confidence_pct} | {signal.model}{block_text}"
+        )
+        self._ai_label.setStyleSheet(
+            f"color: {color}; font-size: 12px; font-weight: bold; padding: 4px 8px; "
+            f"background: #1C232C; border: 1px solid {color}; border-radius: 4px;"
+        )
