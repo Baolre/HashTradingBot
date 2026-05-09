@@ -1,4 +1,4 @@
-"""设置面板 - API Key、轮询间隔、预警阈值等."""
+"""UI 组件。"""
 from __future__ import annotations
 
 from PySide6.QtCore import Signal

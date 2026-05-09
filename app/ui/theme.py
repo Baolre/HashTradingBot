@@ -1,4 +1,4 @@
-"""暗色主题."""
+"""UI 组件。"""
 
 COLOR_BG = "#0D1117"
 COLOR_PANEL = "#161B22"
@@ -10,6 +10,10 @@ COLOR_BORDER = "#30363D"
 # 单双
 COLOR_ODD = "#E53E3E"   # 单 - 红
 COLOR_EVEN = "#22A06B"  # 双 - 绿
+
+# 大小
+COLOR_BIG = "#D97706"    # 大 - 橙
+COLOR_SMALL = "#2563EB"  # 小 - 蓝
 
 
 QSS = f"""

@@ -1,4 +1,4 @@
-"""走势面板 - 连珠走势 + AI信号 + 统计 (合并版)."""
+"""UI 组件。"""
 from __future__ import annotations
 
 from typing import List

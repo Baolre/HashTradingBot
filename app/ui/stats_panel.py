@@ -1,4 +1,4 @@
-"""统计面板."""
+"""UI 组件。"""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt

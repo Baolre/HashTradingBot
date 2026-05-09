@@ -1,9 +1,4 @@
-"""TronGrid HTTP 客户端.
-
-参考:
-- https://developers.tron.network/reference/wallet-getnowblock
-- https://docs.tronscan.org/zh/api/api-keys  (TRON-PRO-API-KEY header)
-"""
+"""TronScan HTTP 客户端（替代原 TronGrid）。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -30,11 +25,11 @@ class BlockInfo:
 
 
 class TronGridClient:
-    """最小可用的 TronGrid 客户端：拿最新块 / 按高度拿块."""
+    """最小可用的 TronScan 客户端：拿最新块 / 按高度拿块。"""
 
     def __init__(
         self,
-        endpoint: str = "https://api.trongrid.io",
+        endpoint: str = "https://apilist.tronscan.org",
         api_key: str = "",
         timeout: float = 10.0,
     ) -> None:
@@ -44,15 +39,15 @@ class TronGridClient:
 
     # ---------- 内部 ----------
     def _headers(self) -> dict:
-        h = {"Content-Type": "application/json", "Accept": "application/json"}
+        h = {"Accept": "application/json"}
         if self.api_key:
             h["TRON-PRO-API-KEY"] = self.api_key
         return h
 
-    def _post(self, path: str, payload: Optional[dict] = None) -> dict:
+    def _get(self, path: str, params: Optional[dict] = None) -> dict:
         url = f"{self.endpoint}{path}"
         with httpx.Client(timeout=self.timeout) as client:
-            resp = client.post(url, headers=self._headers(), json=payload or {})
+            resp = client.get(url, headers=self._headers(), params=params or {})
             resp.raise_for_status()
             return resp.json()
 
@@ -60,11 +55,10 @@ class TronGridClient:
     def _parse(block: dict) -> Optional[BlockInfo]:
         if not block:
             return None
-        header = (block.get("block_header") or {}).get("raw_data") or {}
-        number = header.get("number")
-        ts = header.get("timestamp", 0)
-        parent = header.get("parentHash", "")
-        block_hash = block.get("blockID") or ""
+        number = block.get("number")
+        block_hash = block.get("hash") or block.get("blockID") or ""
+        ts = block.get("timestamp", 0)
+        parent = block.get("parentHash", "")
         txs = block.get("transactions") or []
         if number is None or not block_hash:
             return None
@@ -78,19 +72,21 @@ class TronGridClient:
 
     # ---------- 公开 ----------
     def get_now_block(self) -> Optional[BlockInfo]:
-        """获取最新区块."""
+        """获取最新区块（取第一条）。"""
         try:
-            data = self._post("/wallet/getnowblock")
-            return self._parse(data)
+            data = self._get("/api/block", {"sort": "-number", "limit": 1})
+            blocks = data.get("data") or []
+            return self._parse(blocks[0]) if blocks else None
         except Exception as e:  # noqa: BLE001
             logger.warning("get_now_block 失败: %s", e)
             return None
 
     def get_block_by_num(self, num: int) -> Optional[BlockInfo]:
-        """按高度获取指定区块."""
+        """按高度获取指定区块。"""
         try:
-            data = self._post("/wallet/getblockbynum", {"num": int(num)})
-            return self._parse(data)
+            data = self._get("/api/block", {"number": int(num)})
+            blocks = data.get("data") or []
+            return self._parse(blocks[0]) if blocks else None
         except Exception as e:  # noqa: BLE001
             logger.warning("get_block_by_num(%s) 失败: %s", num, e)
             return None

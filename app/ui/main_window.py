@@ -13,7 +13,6 @@ from ..utils.config import AppConfig, save_config
 from ..utils.logger import get_logger
 from ..utils.notifier import Notifier
 from .alert_panel import AlertPanel
-from .bead_road import BeadRoadView
 from .data_table import DataTablePanel
 from .dragon_panel import DragonPanel
 from .heatmap_panel import HeatmapPanel
@@ -39,13 +38,7 @@ class MainWindow(QMainWindow):
         self.alerter = Alerter(cfg.alert)
         self.predictor = Predictor(cfg.predictor)
         self.simulator = Simulator(cfg.sim, self.predictor)
-        self.notifier = Notifier(
-            self,
-            bark_key=cfg.push.bark_key or "",
-            bark_server=cfg.push.bark_server or "https://api.day.app",
-            bark_sound=cfg.push.bark_sound or "alarm",
-            bark_group=cfg.push.bark_group or "hash_alert",
-        )
+        self.notifier = Notifier(self)
         self.monitor = MonitorController(cfg, self.analyzer, self.alerter, self.storage)
 
         self._countdown = 0
@@ -109,8 +102,7 @@ class MainWindow(QMainWindow):
 
         # Tabs
         self.tabs = QTabWidget()
-        self.trend_view = TrendView(column_max=cfg.ui.column_max, dot_size=cfg.ui.dot_size, column_gap=cfg.ui.column_gap)
-        self.bead_road = BeadRoadView()
+        self.trend_view = TrendView(column_max=self.cfg.ui.column_max, dot_size=self.cfg.ui.dot_size, column_gap=self.cfg.ui.column_gap)
         self.dragon_panel = DragonPanel()
         self.prob_panel = ProbabilityPanel()
         self.sim_panel = SimPanel()
@@ -120,7 +112,6 @@ class MainWindow(QMainWindow):
         self.settings_panel = SettingsPanel(self.cfg)
 
         self.tabs.addTab(self.trend_view, "走势")
-        self.tabs.addTab(self.bead_road, "珠盘路")
         self.tabs.addTab(self.dragon_panel, "长龙")
         self.tabs.addTab(self.prob_panel, "AI信号")
         self.tabs.addTab(self.sim_panel, "模拟")
@@ -219,7 +210,6 @@ class MainWindow(QMainWindow):
         self.trend_view.update_ai_signal(self._last_prediction)
 
         # 珠盘路（始终追加数据）
-        self.bead_road.append_period(period)
 
         # 模拟（始终处理下注，不管是否在模拟Tab）
         if self.simulator.is_running:
@@ -255,8 +245,6 @@ class MainWindow(QMainWindow):
             self.notifier.toast("预警", event.message)
         if self.cfg.alert.sound_enabled:
             self.notifier.beep()
-        # Bark 推送
-        block_url = f"https://tronscan.org/#/block/{event.block_number}" if event.block_number else ""
         self.notifier.push_to_phone(f"预警: {event.kind}",
                                      f"{event.message}\n区块 #{event.block_number or '-'}", block_url)
 
@@ -299,10 +287,9 @@ class MainWindow(QMainWindow):
         s = self.analyzer.stats
         self.trend_view.apply_periods(history, s.odd_total, s.even_total)
         self.trend_view.refresh(self.analyzer)
-        self.bead_road.set_periods(history)
         self.data_table.refresh(self.analyzer)
         self.lbl_total.setText(f"{s.total} 期")
-        dragons = DragonPanel.scan_dragons(self.analyzer, f"{self.cfg.filter.block_multiple}区块")
+        dragons = DragonPanel.scan_dragons(self.analyzer, f"{self.cfg.filter.block_multiple}区块", threshold=4)
         self.dragon_panel.refresh(dragons)
         if s.total > 15:
             self._last_prediction = self.predictor.predict(self.analyzer)

@@ -1,4 +1,4 @@
-"""预警面板."""
+"""UI 组件。"""
 from __future__ import annotations
 
 from datetime import datetime

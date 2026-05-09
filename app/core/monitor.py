@@ -123,8 +123,8 @@ class MonitorWorker(QObject):
         # 如果 last_processed 太旧导致需要补齐的太多，限制最多 50 个以防拖慢
         n = self._last_processed + multiple
         gap = (target_high - self._last_processed) // multiple
-        if gap > 50:
-            n = target_high - 50 * multiple + multiple
+        if gap > 5000:
+            n = target_high - 5000 * multiple + multiple
             logger.info("追赶过多，跳过较早区块，从 #%s 开始补齐", n)
         while n <= target_high and self._running:
             self._process_block_number(n)
