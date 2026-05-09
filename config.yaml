@@ -1,0 +1,45 @@
+# ===== Hash Trading Bot 配置 =====
+
+api:
+  # TronGrid API Key（必填，在 https://www.trongrid.io/ 免费申请）
+  trongrid_api_key: ""
+  # TronGrid 节点
+  trongrid_endpoint: "https://api.trongrid.io"
+  # 轮询间隔（秒），Tron 出块 ~3s，建议 2~4s
+  poll_interval: 3
+  # HTTP 超时时间（秒）
+  timeout: 10
+
+filter:
+  # 仅统计区块高度为该值倍数的区块
+  block_multiple: 20
+
+analyzer:
+  # 走势图最多保留多少期
+  max_history: 200
+  # 连号判定窗口（用于统计最长连号等）
+  streak_window: 100
+
+alert:
+  # 开关：检测"单双单双单双..."交叉预警
+  alternation_enabled: true
+  # 连续交叉到达多少期就触发（>=2），例如 6 表示 单双单双单双
+  alternation_threshold: 6
+  # 触发后多少期内不再重复提醒（防骚扰）
+  cooldown_periods: 3
+  # 声音提醒
+  sound_enabled: true
+  # 桌面通知
+  toast_enabled: true
+
+storage:
+  # SQLite 文件路径
+  db_path: "data/hash_trading.db"
+
+ui:
+  # 走势图一列最多堆叠圆珠数（超过则换列）
+  column_max: 6
+  # 圆珠直径
+  dot_size: 30
+  # 列间距
+  column_gap: 6
