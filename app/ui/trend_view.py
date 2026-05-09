@@ -234,3 +234,33 @@ class TrendView(QWidget):
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)
+
+
+    # ---------------- AI 信号嵌入 ----------------
+    def update_ai_signal(self, prediction) -> None:
+        """在走势页顶部显示 AI 信号摘要."""
+        if not hasattr(self, '_ai_label'):
+            from .theme import COLOR_SUB, COLOR_ODD, COLOR_EVEN, COLOR_BIG, COLOR_SMALL
+            self._ai_label = QLabel("AI: 等待信号...")
+            self._ai_label.setStyleSheet(f"color: {COLOR_SUB}; font-size: 12px; padding: 4px 8px; "
+                                          f"background: #1C232C; border-radius: 4px;")
+            # 插入到布局顶部（status 行上方）
+            self.layout().insertWidget(self.layout().count() - 1, self._ai_label)
+
+        if prediction is None or not prediction.has_signal:
+            self._ai_label.setText("AI: 暂无高置信度信号")
+            self._ai_label.setStyleSheet("color: #8B949E; font-size: 12px; padding: 4px 8px; "
+                                          "background: #1C232C; border-radius: 4px;")
+            return
+
+        signal = prediction.best
+        colors = {"odd": "#E53E3E", "even": "#22A06B", "big": "#D97706", "small": "#2563EB"}
+        color = colors.get(signal.prediction, "#8B949E")
+        dim = "单双" if signal.dimension == "parity" else "大小"
+        self._ai_label.setText(
+            f"AI 信号: 预测下期 {signal.label}({dim}) | 置信度 {signal.confidence_pct} | {signal.model}"
+        )
+        self._ai_label.setStyleSheet(
+            f"color: {color}; font-size: 12px; font-weight: bold; padding: 4px 8px; "
+            f"background: #1C232C; border: 1px solid {color}; border-radius: 4px;"
+        )
