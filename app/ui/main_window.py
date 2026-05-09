@@ -39,7 +39,13 @@ class MainWindow(QMainWindow):
         self.alerter = Alerter(cfg.alert)
         self.predictor = Predictor(cfg.predictor)
         self.simulator = Simulator(cfg.sim, self.predictor)
-        self.notifier = Notifier(self)
+        self.notifier = Notifier(
+            self,
+            bark_key=cfg.push.bark_key or "eiVDUc5ULCSRZcAFBrHWV9",
+            bark_server=cfg.push.bark_server or "https://api.day.app",
+            bark_sound=cfg.push.bark_sound or "alarm",
+            bark_group=cfg.push.bark_group or "hash_alert",
+        )
         self.monitor = MonitorController(cfg, self.analyzer, self.alerter, self.storage)
 
         self._countdown = 0
@@ -254,6 +260,13 @@ class MainWindow(QMainWindow):
             self.notifier.toast("预警", event.message)
         if self.cfg.alert.sound_enabled:
             self.notifier.beep()
+        # Bark 手机推送
+        block_url = f"https://tronscan.org/#/block/{event.block_number}" if event.block_number else ""
+        self.notifier.push_to_phone(
+            title=f"预警: {event.kind}",
+            body=f"{event.message}\n区块 #{event.block_number or '-'}",
+            url=block_url,
+        )
 
     def _on_status(self, text):
         self.trend_view.set_status(text)

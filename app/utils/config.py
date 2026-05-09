@@ -74,6 +74,15 @@ class BackfillConfig:
 
 
 @dataclass
+class PushConfig:
+    bark_enabled: bool = True
+    bark_key: str = ""
+    bark_server: str = "https://api.day.app"
+    bark_sound: str = "alarm"
+    bark_group: str = "hash_alert"
+
+
+@dataclass
 class StorageConfig:
     db_path: str = "data/hash_trading.db"
 
@@ -98,6 +107,7 @@ class AppConfig:
     predictor: PredictorConfig = field(default_factory=PredictorConfig)
     sim: SimConfig = field(default_factory=SimConfig)
     backfill: BackfillConfig = field(default_factory=BackfillConfig)
+    push: PushConfig = field(default_factory=PushConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     ui: UIConfig = field(default_factory=UIConfig)
 
@@ -112,6 +122,7 @@ class AppConfig:
             predictor=PredictorConfig(**(data.get("predictor") or {})),
             sim=SimConfig(**(data.get("sim") or {})),
             backfill=BackfillConfig(**(data.get("backfill") or {})),
+            push=PushConfig(**(data.get("push") or {})),
             storage=StorageConfig(**(data.get("storage") or {})),
             ui=UIConfig(**(data.get("ui") or {})),
         )
