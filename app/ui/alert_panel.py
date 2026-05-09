@@ -60,3 +60,37 @@ class AlertPanel(QWidget):
             item = QListWidgetItem(text)
             item.setForeground(Qt.red)
             self.list.addItem(item)
+
+
+    def show_popup(self, event, parent_window=None) -> None:
+        """在窗口右下角显示一个自动消失的预警浮窗."""
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QFrame, QVBoxLayout as VLay
+
+        popup = QFrame(parent_window)
+        popup.setStyleSheet(
+            "QFrame { background: #1C232C; border: 2px solid #E53E3E; "
+            "border-radius: 8px; padding: 10px; }"
+        )
+        popup.setFixedSize(320, 70)
+
+        lay = VLay(popup)
+        lay.setContentsMargins(10, 6, 10, 6)
+        lay.setSpacing(4)
+
+        title_lbl = QLabel(f"⚠ {event.kind}")
+        title_lbl.setStyleSheet("color: #E53E3E; font-weight: bold; font-size: 12px;")
+        lay.addWidget(title_lbl)
+
+        msg_lbl = QLabel(event.message)
+        msg_lbl.setStyleSheet("color: #E6EDF3; font-size: 11px;")
+        msg_lbl.setWordWrap(True)
+        lay.addWidget(msg_lbl)
+
+        if parent_window:
+            geo = parent_window.geometry()
+            popup.move(geo.width() - 340, geo.height() - 130)
+
+        popup.show()
+        popup.raise_()
+        QTimer.singleShot(5000, popup.deleteLater)

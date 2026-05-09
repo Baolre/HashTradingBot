@@ -1,26 +1,32 @@
-"""连珠走势图 - 参考截图中"区块走势"样式.
-
-规则:
-- 每列最多堆 column_max 个圆珠
-- 来了新一期：若与当前列最顶同色则向上叠；否则开新列从底部开始
-- 红 = 单 odd，绿 = 双 even；unknown 跳过
-"""
+"""走势面板 - 连珠走势 + AI信号 + 统计 (合并版)."""
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List
 
-from PySide6.QtCore import Qt, QRect, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QRect, QSize, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QBrush
+from PySide6.QtWidgets import (
+    QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
+    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+)
 
-from ..core.analyzer import PARITY_EVEN, PARITY_ODD, Period
+from ..core.analyzer import PARITY_EVEN, PARITY_ODD, Analyzer, Period
 from .theme import COLOR_BG, COLOR_EVEN, COLOR_ODD, COLOR_PANEL, COLOR_SUB, COLOR_TEXT
 
 
-# -------------------- 计数胶囊 --------------------
-class CountPill(QFrame):
-    """类似截图中的 [双 96] / [单 104] 胶囊."""
+def _metric(title: str, value_label: QLabel) -> QWidget:
+    w = QWidget()
+    lay = QVBoxLayout(w)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(2)
+    t = QLabel(title)
+    t.setStyleSheet(f"color: {COLOR_SUB}; font-size: 11px;")
+    lay.addWidget(t)
+    lay.addWidget(value_label)
+    return w
 
+
+class CountPill(QFrame):
     def __init__(self, label: str, color: str, parent=None):
         super().__init__(parent)
         self._label = label
@@ -33,71 +39,57 @@ class CountPill(QFrame):
         self._count = n
         self.update()
 
-    def paintEvent(self, event) -> None:  # noqa: D401
+    def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         rect = self.rect().adjusted(1, 1, -1, -1)
         radius = rect.height() / 2
-
-        # 背景
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(QColor(COLOR_PANEL)))
         p.drawRoundedRect(rect, radius, radius)
-
-        # 左侧色点
         dot_r = rect.height() - 10
         dot_rect = QRect(rect.left() + 6, rect.top() + 5, dot_r, dot_r)
         p.setBrush(QBrush(QColor(self._color)))
         p.drawEllipse(dot_rect)
-
-        # 文字: 标签
         font = QFont(self.font())
         font.setPointSize(10)
         p.setFont(font)
         p.setPen(QColor("#FFFFFF"))
-        label_rect = QRect(dot_rect.right() + 8, rect.top(), 28, rect.height())
+        label_rect = QRect(dot_rect.right() + 6, rect.top(), 20, rect.height())
         p.drawText(label_rect, Qt.AlignVCenter | Qt.AlignLeft, self._label)
-
-        # 文字: 数字
         num_font = QFont(self.font())
         num_font.setPointSize(12)
         num_font.setBold(True)
         p.setFont(num_font)
         num_rect = QRect(label_rect.right() + 2, rect.top(),
-                         rect.right() - label_rect.right() - 10, rect.height())
+                         rect.right() - label_rect.right() - 8, rect.height())
         p.setPen(QColor(COLOR_TEXT))
         p.drawText(num_rect, Qt.AlignVCenter | Qt.AlignLeft, str(self._count))
 
 
-# -------------------- 珠盘 --------------------
 class BeadBoard(QWidget):
-    """红绿圆珠走势盘."""
+    """红绿圆珠走势盘 - 最新在右侧."""
 
     def __init__(self, column_max: int = 6, dot_size: int = 30, column_gap: int = 6, parent=None):
         super().__init__(parent)
         self.column_max = max(3, column_max)
         self.dot_size = max(18, dot_size)
         self.column_gap = max(2, column_gap)
-        self._columns: List[List[str]] = []   # 每列是 parity 列表，["odd", "odd"]
-        self.setMinimumHeight(self.column_max * (self.dot_size + 4) + 20)
-        self.setStyleSheet(f"background: {COLOR_BG};")
+        self._columns: List[List[str]] = []
+        self._min_height = self.column_max * (self.dot_size + 4) + 20
+        self.setMinimumHeight(self._min_height)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-    # ---------------- 数据刷新 ----------------
     def set_periods(self, periods: List[Period]) -> None:
-        """用整段历史重新布局列."""
         self._columns = []
         for p in periods:
             self._push(p.parity)
-        self.updateGeometry()
+        self._update_size()
         self.update()
 
     def append(self, period: Period) -> None:
         self._push(period.parity)
-        self.updateGeometry()
-        self.update()
-
-    def clear(self) -> None:
-        self._columns = []
+        self._update_size()
         self.update()
 
     def _push(self, parity: str) -> None:
@@ -112,34 +104,23 @@ class BeadBoard(QWidget):
         else:
             self._columns.append([parity])
 
-    # ---------------- 尺寸 ----------------
-    def _needed_width(self) -> int:
+    def _update_size(self) -> None:
         cols = max(1, len(self._columns))
         step = self.dot_size + self.column_gap
-        return 20 + cols * step
+        self.setFixedSize(20 + cols * step, self._min_height)
 
-    def sizeHint(self):
-        return self.minimumSize().expandedTo(
-            self.minimumSize().__class__(self._needed_width(), self.minimumHeight())
-        )
-
-    # ---------------- 绘制 ----------------
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor(COLOR_BG))
-
         if not self._columns:
             p.setPen(QColor(COLOR_SUB))
             p.drawText(self.rect(), Qt.AlignCenter, "暂无数据，等待区块...")
             return
-
         step_x = self.dot_size + self.column_gap
         step_y = self.dot_size + 4
         x0 = 10
-        # 底部对齐：最新的珠永远贴底
         y_base = self.height() - 10 - self.dot_size
-
         for ci, col in enumerate(self._columns):
             x = x0 + ci * step_x
             for ri, parity in enumerate(col):
@@ -148,20 +129,17 @@ class BeadBoard(QWidget):
                 p.setPen(Qt.NoPen)
                 p.setBrush(QBrush(color))
                 p.drawEllipse(x, y, self.dot_size, self.dot_size)
-
-                # 文字
                 font = QFont(self.font())
                 font.setPointSize(10)
                 font.setBold(True)
                 p.setFont(font)
                 p.setPen(QColor("#FFFFFF"))
-                rect = QRect(x, y, self.dot_size, self.dot_size)
-                p.drawText(rect, Qt.AlignCenter, "单" if parity == PARITY_ODD else "双")
+                p.drawText(QRect(x, y, self.dot_size, self.dot_size),
+                           Qt.AlignCenter, "单" if parity == PARITY_ODD else "双")
 
 
-# -------------------- 顶部容器：标题 + 胶囊 + 珠盘 --------------------
 class TrendView(QWidget):
-    """外层容器."""
+    """走势面板 - 走势图 + AI信号 + 统计（合并版）."""
 
     refresh_requested = Signal()
 
@@ -169,92 +147,130 @@ class TrendView(QWidget):
         super().__init__(parent)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(12, 8, 12, 8)
+        root.setSpacing(6)
 
-        # 顶栏
+        # ===== 顶栏：标题 + 计数胶囊 =====
         top = QHBoxLayout()
         title = QLabel("开奖走势")
-        f = title.font()
-        f.setPointSize(13)
-        f.setBold(True)
-        title.setFont(f)
+        f = title.font(); f.setPointSize(13); f.setBold(True); title.setFont(f)
         top.addWidget(title)
         top.addStretch()
-
         self.even_pill = CountPill("双", COLOR_EVEN)
         self.odd_pill = CountPill("单", COLOR_ODD)
         top.addWidget(self.even_pill)
-        top.addSpacing(8)
+        top.addSpacing(6)
         top.addWidget(self.odd_pill)
-
         root.addLayout(top)
 
-        # 子标签按钮（纯样式，参考截图）
-        tab_bar = QHBoxLayout()
-        tab_bar.setContentsMargins(0, 0, 0, 0)
-        btn_a = QPushButton("区块走势")
-        btn_a.setCheckable(True)
-        btn_a.setChecked(True)
-        btn_a.setFixedHeight(26)
-        btn_b = QPushButton("我的走势")
-        btn_b.setCheckable(True)
-        btn_b.setFixedHeight(26)
-        btn_b.setEnabled(False)  # 先占位
-        for b in (btn_a, btn_b):
-            b.setStyleSheet(
-                f"QPushButton {{ border-radius: 13px; padding: 2px 14px; "
-                f"background: {COLOR_PANEL}; color: {COLOR_SUB}; }}"
-                f"QPushButton:checked {{ background: #FFFFFF; color: #000000; }}"
-            )
-        tab_bar.addWidget(btn_a)
-        tab_bar.addWidget(btn_b)
-        tab_bar.addStretch()
-        root.addLayout(tab_bar)
+        # ===== AI 信号横幅 =====
+        self._ai_label = QLabel("AI: 等待信号...")
+        self._ai_label.setStyleSheet(
+            f"color: {COLOR_SUB}; font-size: 12px; padding: 6px 10px; "
+            f"background: #1C232C; border-radius: 4px;"
+        )
+        root.addWidget(self._ai_label)
 
-        # 珠盘
+        # ===== 珠盘 + 滚动 =====
         self.board = BeadBoard(column_max=column_max, dot_size=dot_size, column_gap=column_gap)
-        root.addWidget(self.board, 1)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(False)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setWidget(self.board)
+        self.scroll.setStyleSheet(f"QScrollArea {{ background: {COLOR_BG}; border: none; }}")
+        self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.scroll.setMinimumHeight(self.board._min_height + 20)
+        root.addWidget(self.scroll, 1)
 
-        # 状态行
+        # ===== 统计区 =====
+        grp = QGroupBox("实时统计")
+        grid = QGridLayout(grp)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(4)
+
+        self.lbl_total = QLabel("0")
+        self.lbl_odd = QLabel("0")
+        self.lbl_even = QLabel("0")
+        self.lbl_ratio = QLabel("-")
+        self.lbl_streak = QLabel("-")
+        self.lbl_longest_odd = QLabel("0")
+        self.lbl_longest_even = QLabel("0")
+        self.lbl_alt = QLabel("0")
+
+        for lbl in (self.lbl_total, self.lbl_odd, self.lbl_even, self.lbl_ratio,
+                    self.lbl_streak, self.lbl_longest_odd, self.lbl_longest_even, self.lbl_alt):
+            f2 = lbl.font(); f2.setPointSize(12); f2.setBold(True); lbl.setFont(f2)
+
+        self.lbl_odd.setStyleSheet(f"color: {COLOR_ODD};")
+        self.lbl_even.setStyleSheet(f"color: {COLOR_EVEN};")
+
+        grid.addWidget(_metric("总期数", self.lbl_total), 0, 0)
+        grid.addWidget(_metric("单", self.lbl_odd), 0, 1)
+        grid.addWidget(_metric("双", self.lbl_even), 0, 2)
+        grid.addWidget(_metric("占比", self.lbl_ratio), 0, 3)
+        grid.addWidget(_metric("当前连号", self.lbl_streak), 1, 0)
+        grid.addWidget(_metric("最长单连", self.lbl_longest_odd), 1, 1)
+        grid.addWidget(_metric("最长双连", self.lbl_longest_even), 1, 2)
+        grid.addWidget(_metric("交叉长度", self.lbl_alt), 1, 3)
+        root.addWidget(grp)
+
+        # ===== 状态行 =====
         self.status = QLabel("等待启动监控…")
-        self.status.setObjectName("sub")
+        self.status.setStyleSheet(f"color: {COLOR_SUB};")
         root.addWidget(self.status)
 
-    # ---------------- 对外 ----------------
+    # ==================== 公开方法 ====================
+
+    def _scroll_to_right(self) -> None:
+        QTimer.singleShot(50, lambda: self.scroll.horizontalScrollBar().setValue(
+            self.scroll.horizontalScrollBar().maximum()
+        ))
+
     def apply_periods(self, periods: List[Period], odd_total: int, even_total: int) -> None:
         self.board.set_periods(periods)
         self.odd_pill.set_count(odd_total)
         self.even_pill.set_count(even_total)
+        self._scroll_to_right()
 
     def on_new_period(self, period: Period, odd_total: int, even_total: int) -> None:
         self.board.append(period)
         self.odd_pill.set_count(odd_total)
         self.even_pill.set_count(even_total)
+        self._scroll_to_right()
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)
 
-
-    def refresh(self, analyzer) -> None:
-        """Placeholder for compatibility - stats shown elsewhere."""
-        pass
+    def refresh(self, analyzer: Analyzer) -> None:
+        """刷新统计区."""
+        s = analyzer.stats
+        self.lbl_total.setText(str(s.total))
+        self.lbl_odd.setText(str(s.odd_total))
+        self.lbl_even.setText(str(s.even_total))
+        if s.total:
+            self.lbl_ratio.setText(f"{s.odd_total*100//s.total}% / {s.even_total*100//s.total}%")
+        else:
+            self.lbl_ratio.setText("-")
+        if s.current_streak_parity == PARITY_ODD:
+            self.lbl_streak.setText(f"单×{s.current_streak_len}")
+            self.lbl_streak.setStyleSheet(f"color: {COLOR_ODD};")
+        elif s.current_streak_parity == PARITY_EVEN:
+            self.lbl_streak.setText(f"双×{s.current_streak_len}")
+            self.lbl_streak.setStyleSheet(f"color: {COLOR_EVEN};")
+        else:
+            self.lbl_streak.setText("-")
+        self.lbl_longest_odd.setText(str(s.longest_odd_streak))
+        self.lbl_longest_even.setText(str(s.longest_even_streak))
+        self.lbl_alt.setText(str(s.current_alternation_len))
 
     def update_ai_signal(self, prediction) -> None:
-        """在走势页底部显示 AI 信号摘要（含预测区块号）."""
-        if not hasattr(self, '_ai_label'):
-            self._ai_label = QLabel("AI: 等待信号...")
-            self._ai_label.setStyleSheet(
-                f"color: {COLOR_SUB}; font-size: 12px; padding: 4px 8px; "
-                f"background: #1C232C; border-radius: 4px;"
-            )
-            self.layout().insertWidget(self.layout().count() - 1, self._ai_label)
-
+        """更新 AI 信号横幅（含预测区块号）."""
         if prediction is None or not prediction.has_signal:
             self._ai_label.setText("AI: 暂无高置信度信号")
             self._ai_label.setStyleSheet(
-                "color: #8B949E; font-size: 12px; padding: 4px 8px; "
-                "background: #1C232C; border-radius: 4px;"
+                f"color: {COLOR_SUB}; font-size: 12px; padding: 6px 10px; "
+                f"background: #1C232C; border-radius: 4px;"
             )
             return
 
@@ -263,9 +279,10 @@ class TrendView(QWidget):
         block_num = signal.next_block_number or prediction.next_block_number or 0
         block_text = f" | 预测区块 #{block_num}" if block_num else ""
         self._ai_label.setText(
-            f"AI 信号: 预测下期 {signal.label} | 置信度 {signal.confidence_pct} | {signal.model}{block_text}"
+            f"AI 预测下期: {signal.label} | 置信度 {signal.confidence_pct} | "
+            f"{signal.model}{block_text}"
         )
         self._ai_label.setStyleSheet(
-            f"color: {color}; font-size: 12px; font-weight: bold; padding: 4px 8px; "
+            f"color: {color}; font-size: 12px; font-weight: bold; padding: 6px 10px; "
             f"background: #1C232C; border: 1px solid {color}; border-radius: 4px;"
         )

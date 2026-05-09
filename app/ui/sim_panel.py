@@ -82,10 +82,15 @@ class SimPanel(QWidget):
 
     def refresh(self, state: SimState) -> None:
         self.lbl_balance.setText(f"¥{state.balance:.0f}")
-        pnl = state.balance - self.sp_initial.value()
+        initial = self.sp_initial.value()
+        pnl = state.balance - initial
         self.lbl_pnl.setText(f"{'+'if pnl>=0 else ''}{pnl:.0f}")
         self.lbl_pnl.setStyleSheet(f"color: {COLOR_EVEN if pnl >= 0 else COLOR_ODD};")
         self.lbl_win_rate.setText(f"{state.win_rate*100:.1f}%")
+        # 更新曲线起始值显示
+        if state.total_bets == 0:
+            self.lbl_balance.setText(f"¥{initial:.0f}")
+            self.lbl_pnl.setText("¥0")
 
     def update_curve(self, data: List[float]) -> None:
         self.curve.set_data(data)

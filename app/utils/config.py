@@ -1,4 +1,4 @@
-"""配置加载与保存工具."""
+"""配置加载与保存工具 - 纯单双版."""
 from __future__ import annotations
 
 import os
@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, Dict
 
 import yaml
-
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.yaml"
 
@@ -18,6 +17,8 @@ class ApiConfig:
     trongrid_endpoint: str = "https://api.trongrid.io"
     poll_interval: int = 3
     timeout: int = 10
+    max_retries: int = 3
+    retry_delay: float = 1.0
 
 
 @dataclass
@@ -27,7 +28,7 @@ class FilterConfig:
 
 @dataclass
 class AnalyzerConfig:
-    max_history: int = 200
+    max_history: int = 500
     streak_window: int = 100
 
 
@@ -35,9 +36,48 @@ class AnalyzerConfig:
 class AlertConfig:
     alternation_enabled: bool = True
     alternation_threshold: int = 6
+    streak_enabled: bool = True
+    streak_threshold: int = 6
+    miss_enabled: bool = True
+    miss_threshold: int = 10
     cooldown_periods: int = 3
     sound_enabled: bool = True
     toast_enabled: bool = True
+
+
+@dataclass
+class PredictorConfig:
+    enabled: bool = True
+    confidence_threshold: float = 0.70
+    markov_window: int = 50
+    bayesian_window: int = 30
+    cycle_max_period: int = 20
+    density_window: int = 10
+
+
+@dataclass
+class SimConfig:
+    initial_balance: float = 10000.0
+    base_bet: float = 100.0
+    max_bet: float = 5000.0
+    strategy: str = "flat"
+    target: str = "follow_trend"
+
+
+@dataclass
+class BackfillConfig:
+    enabled: bool = True
+    days: int = 7
+    max_blocks_per_run: int = 5000
+
+
+@dataclass
+class PushConfig:
+    bark_enabled: bool = True
+    bark_key: str = ""
+    bark_server: str = "https://api.day.app"
+    bark_sound: str = "alarm"
+    bark_group: str = "hash_alert"
 
 
 @dataclass
@@ -58,6 +98,10 @@ class AppConfig:
     filter: FilterConfig = field(default_factory=FilterConfig)
     analyzer: AnalyzerConfig = field(default_factory=AnalyzerConfig)
     alert: AlertConfig = field(default_factory=AlertConfig)
+    predictor: PredictorConfig = field(default_factory=PredictorConfig)
+    sim: SimConfig = field(default_factory=SimConfig)
+    backfill: BackfillConfig = field(default_factory=BackfillConfig)
+    push: PushConfig = field(default_factory=PushConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     ui: UIConfig = field(default_factory=UIConfig)
 
@@ -69,6 +113,10 @@ class AppConfig:
             filter=FilterConfig(**(data.get("filter") or {})),
             analyzer=AnalyzerConfig(**(data.get("analyzer") or {})),
             alert=AlertConfig(**(data.get("alert") or {})),
+            predictor=PredictorConfig(**(data.get("predictor") or {})),
+            sim=SimConfig(**(data.get("sim") or {})),
+            backfill=BackfillConfig(**(data.get("backfill") or {})),
+            push=PushConfig(**(data.get("push") or {})),
             storage=StorageConfig(**(data.get("storage") or {})),
             ui=UIConfig(**(data.get("ui") or {})),
         )
