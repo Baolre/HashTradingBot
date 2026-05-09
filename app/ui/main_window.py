@@ -1,4 +1,4 @@
-"""主窗口 - 走势/珠盘/长龙/AI信号/模拟/热力图/明细/预警/设置 + 倒计时+网络灯+懒加载."""
+"""主窗口 - 走势/AI信号/模拟/明细/预警/设置 + 倒计时+网络灯+懒加载."""
 from __future__ import annotations
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
@@ -14,8 +14,6 @@ from ..utils.logger import get_logger
 from ..utils.notifier import Notifier
 from .alert_panel import AlertPanel
 from .data_table import DataTablePanel
-from .dragon_panel import DragonPanel
-from .heatmap_panel import HeatmapPanel
 from .probability_panel import ProbabilityPanel
 from .settings_panel import SettingsPanel
 from .sim_panel import SimPanel
@@ -103,19 +101,15 @@ class MainWindow(QMainWindow):
         # Tabs
         self.tabs = QTabWidget()
         self.trend_view = TrendView(column_max=self.cfg.ui.column_max, dot_size=self.cfg.ui.dot_size, column_gap=self.cfg.ui.column_gap)
-        self.dragon_panel = DragonPanel()
         self.prob_panel = ProbabilityPanel()
         self.sim_panel = SimPanel()
-        self.heatmap_panel = HeatmapPanel()
         self.data_table = DataTablePanel()
         self.alert_panel = AlertPanel()
         self.settings_panel = SettingsPanel(self.cfg)
 
         self.tabs.addTab(self.trend_view, "走势")
-        self.tabs.addTab(self.dragon_panel, "长龙")
         self.tabs.addTab(self.prob_panel, "AI信号")
         self.tabs.addTab(self.sim_panel, "模拟")
-        self.tabs.addTab(self.heatmap_panel, "热力图")
         self.tabs.addTab(self.data_table, "明细")
         self._alert_tab_idx = self.tabs.addTab(self.alert_panel, "预警")
         self.tabs.addTab(self.settings_panel, "设置")
@@ -221,13 +215,8 @@ class MainWindow(QMainWindow):
 
         # 懒加载：只刷新当前可见Tab
         current = self.tabs.currentWidget()
-        if current is self.dragon_panel:
-            dragons = DragonPanel.scan_dragons(self.analyzer, f"{self.cfg.filter.block_multiple}区块", threshold=4)
-            self.dragon_panel.refresh(dragons)
-        elif current is self.prob_panel:
+        if current is self.prob_panel:
             self.prob_panel.refresh(self.analyzer, self._last_prediction)
-        elif current is self.heatmap_panel:
-            self.heatmap_panel.refresh(self.analyzer)
         elif current is self.data_table:
             self.data_table.refresh(self.analyzer)
 
@@ -289,8 +278,6 @@ class MainWindow(QMainWindow):
         self.trend_view.refresh(self.analyzer)
         self.data_table.refresh(self.analyzer)
         self.lbl_total.setText(f"{s.total} 期")
-        dragons = DragonPanel.scan_dragons(self.analyzer, f"{self.cfg.filter.block_multiple}区块", threshold=4)
-        self.dragon_panel.refresh(dragons)
         if s.total > 15:
             self._last_prediction = self.predictor.predict(self.analyzer)
             self.prob_panel.refresh(self.analyzer, self._last_prediction)
