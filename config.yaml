@@ -36,7 +36,7 @@ push:
   # Bark 手机推送（iOS）配置
   # 1. 在 App Store 下载 Bark，复制首页的设备 Key 到下面
   # 2. 留空则不推送
-  bark_key: ""
+  bark_key: "eiVDUc5ULCSRZcAFBrHWV9"
   bark_server: "https://api.day.app"
   bark_sound: "alarm"
   bark_group: "hash_alert"
