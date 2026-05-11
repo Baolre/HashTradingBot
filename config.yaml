@@ -55,7 +55,7 @@ backfill:
 
 ui:
   # 走势图一列最多堆叠圆珠数（超过则换列）
-  column_max: 6
+  column_max: 5
   # 圆珠直径
   dot_size: 30
   # 列间距

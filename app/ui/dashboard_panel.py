@@ -107,7 +107,7 @@ class AICard(Card):
         self.tbl_models.verticalHeader().setVisible(False)
         self.tbl_models.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tbl_models.setSelectionMode(QTableWidget.NoSelection)
-        self.tbl_models.setFixedHeight(92)
+        self.tbl_models.setFixedHeight(130)
         body.addWidget(self.tbl_models)
 
     def update_prediction(self, prediction) -> None:
@@ -678,8 +678,8 @@ class DashboardPanel(QWidget):
         left_lay.setContentsMargins(0, 0, 0, 0); left_lay.setSpacing(12)
         self.trend_card = TrendCard(column_max=column_max, dot_size=dot_size, column_gap=column_gap)
         self.analysis_card = AnalysisCard()
-        left_lay.addWidget(self.trend_card, 3)
-        left_lay.addWidget(self.analysis_card, 2)
+        left_lay.addWidget(self.trend_card, 2)
+        left_lay.addWidget(self.analysis_card, 3)
 
         # 右列：使用垂直 Splitter，允许用户调整 4 个卡片高度
         right_splitter = QSplitter(Qt.Vertical)
