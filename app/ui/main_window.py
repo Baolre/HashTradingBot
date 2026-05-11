@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QMessageBox, QP
 from ..core.alerter import AlertEvent, Alerter
 from ..core.analyzer import Analyzer
 from ..core.monitor import MonitorController
+from ..core.prediction_tracker import PredictionTracker
 from ..core.predictor import Predictor
 from ..core.simulator import Simulator
 from ..storage.db import Storage
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
         self.analyzer = Analyzer(max_history=cfg.analyzer.max_history)
         self.alerter = Alerter(cfg.alert)
         self.predictor = Predictor(cfg.predictor)
+        self.tracker = PredictionTracker(max_history=max(1000, cfg.analyzer.max_history))
         self.simulator = Simulator(cfg.sim, self.predictor)
         self.notifier = Notifier(self)
         self.monitor = MonitorController(cfg, self.analyzer, self.alerter, self.storage)
@@ -49,6 +51,12 @@ class MainWindow(QMainWindow):
                 self.analyzer.ingest(p)
         except Exception as e:
             logger.warning("加载历史失败: %s", e)
+
+        # 基于历史做一次命中率回测，让用户打开就能看到数据
+        try:
+            self.tracker.backtest(self.predictor, self.analyzer)
+        except Exception as e:
+            logger.warning("命中率回测失败: %s", e)
 
         self._build_ui()
         self._connect_signals()
@@ -200,8 +208,18 @@ class MainWindow(QMainWindow):
         self.trend_view.on_new_period(period, s.odd_total, s.even_total)
         self.trend_view.refresh(self.analyzer)
 
+        # AI 预测命中跟踪：先用本期结算上次的预测，再基于最新数据产生新预测
+        try:
+            self.tracker.settle(period)
+        except Exception as e:
+            logger.warning("tracker.settle 失败: %s", e)
+
         # AI 预测
         self._last_prediction = self.predictor.predict(self.analyzer)
+        try:
+            self.tracker.record(self._last_prediction)
+        except Exception as e:
+            logger.warning("tracker.record 失败: %s", e)
         self.trend_view.update_ai_signal(self._last_prediction)
 
         # 珠盘路（始终追加数据）
@@ -217,7 +235,7 @@ class MainWindow(QMainWindow):
         # 懒加载：只刷新当前可见Tab
         current = self.tabs.currentWidget()
         if current is self.prob_panel:
-            self.prob_panel.refresh(self.analyzer, self._last_prediction)
+            self.prob_panel.refresh(self.analyzer, self._last_prediction, self.tracker)
         elif current is self.data_table:
             self.data_table.refresh(self.analyzer)
 
@@ -288,7 +306,7 @@ class MainWindow(QMainWindow):
         self.lbl_total.setText(f"{s.total} 期")
         # 总是调用预测器，让用户立刻看到"观察中"反馈；Predictor 内部自己判断数据是否足够
         self._last_prediction = self.predictor.predict(self.analyzer)
-        self.prob_panel.refresh(self.analyzer, self._last_prediction)
+        self.prob_panel.refresh(self.analyzer, self._last_prediction, self.tracker)
         self.trend_view.update_ai_signal(self._last_prediction)
 
     def closeEvent(self, event):
