@@ -265,7 +265,7 @@ class TrendCard(Card):
             "border-radius: 8px; }"
         )
         self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.scroll.setMinimumHeight(self.board._min_height + 24)
+        self.scroll.setMinimumHeight(self.board._min_height)
         self.scroll.viewport().installEventFilter(self)
         body.addWidget(self.scroll, 1)
 
@@ -655,7 +655,18 @@ class AlertsCard(Card):
 # ==================== Dashboard 主容器 ====================
 
 class DashboardPanel(QWidget):
-    """一屏聚合所有核心信息的 Dashboard."""
+    """一屏聚合所有核心信息的 Dashboard.
+
+    布局：
+    ┌─────────────────────────────────────────────────────────┐
+    │ 指标条                                                   │
+    ├────────────────────────────────┬────────────────────────┤
+    │ 走势卡（紧凑，无多余空白）       │ AI 预测卡              │
+    │ AI banner + 珠盘               │ 命中率统计卡            │
+    ├────────────────────────────────┤ 最近开奖对照表          │
+    │ 预警记录                        │                        │
+    └────────────────────────────────┴────────────────────────┘
+    """
 
     def __init__(self, column_max=6, dot_size=28, column_gap=6, parent=None):
         super().__init__(parent)
@@ -668,40 +679,41 @@ class DashboardPanel(QWidget):
         self.metrics = MetricStrip()
         root.addWidget(self.metrics)
 
-        # 第二排：水平分栏 - 左（走势 + 分析）右（AI + 命中率 + 对照表 + 预警）
+        # 第二排：水平分栏 - 左（走势 + 预警）右（AI + 命中率 + 对照表）
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
 
-        # 左列
-        left = QWidget()
-        left_lay = QVBoxLayout(left)
-        left_lay.setContentsMargins(0, 0, 0, 0); left_lay.setSpacing(12)
+        # 左列：走势卡（紧凑）+ 预警卡
+        left_splitter = QSplitter(Qt.Vertical)
+        left_splitter.setChildrenCollapsible(False)
         self.trend_card = TrendCard(column_max=column_max, dot_size=dot_size, column_gap=column_gap)
-        self.analysis_card = AnalysisCard()
-        left_lay.addWidget(self.trend_card, 2)
-        left_lay.addWidget(self.analysis_card, 3)
+        self.alerts_card = AlertsCard()
+        left_splitter.addWidget(self.trend_card)
+        left_splitter.addWidget(self.alerts_card)
+        left_splitter.setStretchFactor(0, 3)
+        left_splitter.setStretchFactor(1, 2)
 
-        # 右列：使用垂直 Splitter，允许用户调整 4 个卡片高度
+        # 右列：AI + 命中率 + 对照表
         right_splitter = QSplitter(Qt.Vertical)
         right_splitter.setChildrenCollapsible(False)
         self.ai_card = AICard()
         self.accuracy_card = AccuracyCard()
         self.recent_card = RecentBlocksCard()
-        self.alerts_card = AlertsCard()
         right_splitter.addWidget(self.ai_card)
         right_splitter.addWidget(self.accuracy_card)
         right_splitter.addWidget(self.recent_card)
-        right_splitter.addWidget(self.alerts_card)
         right_splitter.setStretchFactor(0, 3)
         right_splitter.setStretchFactor(1, 3)
         right_splitter.setStretchFactor(2, 5)
-        right_splitter.setStretchFactor(3, 3)
 
-        splitter.addWidget(left)
+        splitter.addWidget(left_splitter)
         splitter.addWidget(right_splitter)
         splitter.setStretchFactor(0, 5)
         splitter.setStretchFactor(1, 4)
         splitter.setSizes([700, 560])
+
+        # AnalysisCard 保留实例（后端不动）但不显示在布局中
+        self.analysis_card = AnalysisCard()
 
         root.addWidget(splitter, 1)
 
