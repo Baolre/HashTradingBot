@@ -1,139 +1,155 @@
-"""设置面板 - API / 过滤 / 预警 / 推送."""
+"""设置面板 - 紧凑多列布局."""
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QGridLayout, QGroupBox, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox,
+    QVBoxLayout, QWidget,
 )
 
 from ..utils.config import AppConfig
 
 
+def _line(text: str = "", placeholder: str = "", password: bool = False, max_w: int = 260) -> QLineEdit:
+    ed = QLineEdit(text)
+    if placeholder:
+        ed.setPlaceholderText(placeholder)
+    if password:
+        ed.setEchoMode(QLineEdit.Password)
+    ed.setMaximumWidth(max_w)
+    return ed
+
+
+def _spin(value: int, lo: int, hi: int, suffix: str = "", max_w: int = 120) -> QSpinBox:
+    sp = QSpinBox()
+    sp.setRange(lo, hi)
+    sp.setValue(value)
+    if suffix:
+        sp.setSuffix(suffix)
+    sp.setMaximumWidth(max_w)
+    return sp
+
+
 class SettingsPanel(QWidget):
-    saved = Signal(object)  # AppConfig
+    saved = Signal(object)
 
     def __init__(self, cfg: AppConfig, parent=None):
         super().__init__(parent)
         self._cfg = cfg
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(12)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
 
-        # API 设置
+        content = QWidget()
+        scroll.setWidget(content)
+        root = QVBoxLayout(content)
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(16)
+
+        # ===== TRON API =====
         grp_api = QGroupBox("TRON API")
-        form_api = QFormLayout(grp_api)
-        self.ed_endpoint = QLineEdit(cfg.api.trongrid_endpoint)
-        self.ed_api_key = QLineEdit(cfg.api.trongrid_api_key)
-        self.ed_api_key.setEchoMode(QLineEdit.Password)
-        self.ed_api_key.setPlaceholderText("请输入 TronGrid API Key（header: TRON-PRO-API-KEY）")
-        self.sp_interval = QSpinBox(); self.sp_interval.setRange(1, 60)
-        self.sp_interval.setValue(cfg.api.poll_interval)
-        self.sp_interval.setSuffix(" 秒")
-        self.sp_timeout = QSpinBox(); self.sp_timeout.setRange(3, 60)
-        self.sp_timeout.setValue(cfg.api.timeout)
-        self.sp_timeout.setSuffix(" 秒")
+        g = QGridLayout(grp_api)
+        g.setHorizontalSpacing(14); g.setVerticalSpacing(8)
+        g.setColumnStretch(1, 1); g.setColumnStretch(3, 1)
 
-        form_api.addRow("Endpoint:", self.ed_endpoint)
-        form_api.addRow("API Key:", self.ed_api_key)
-        form_api.addRow("轮询间隔:", self.sp_interval)
-        form_api.addRow("请求超时:", self.sp_timeout)
+        self.ed_endpoint = _line(cfg.api.trongrid_endpoint, max_w=320)
+        self.ed_api_key = _line(cfg.api.trongrid_api_key, "TronGrid API Key", password=True, max_w=320)
+        self.sp_interval = _spin(cfg.api.poll_interval, 1, 60, " 秒")
+        self.sp_timeout = _spin(cfg.api.timeout, 3, 60, " 秒")
+
+        g.addWidget(QLabel("Endpoint:"), 0, 0)
+        g.addWidget(self.ed_endpoint, 0, 1, 1, 3)
+        g.addWidget(QLabel("API Key:"), 1, 0)
+        g.addWidget(self.ed_api_key, 1, 1, 1, 3)
+        g.addWidget(QLabel("轮询:"), 2, 0)
+        g.addWidget(self.sp_interval, 2, 1)
+        g.addWidget(QLabel("超时:"), 2, 2)
+        g.addWidget(self.sp_timeout, 2, 3)
         root.addWidget(grp_api)
 
-        # 过滤设置
-        grp_filter = QGroupBox("区块过滤")
-        form_filter = QFormLayout(grp_filter)
-        self.sp_mult = QSpinBox(); self.sp_mult.setRange(1, 10000)
-        self.sp_mult.setValue(cfg.filter.block_multiple)
-        form_filter.addRow("仅统计区块号为其倍数:", self.sp_mult)
-        form_filter.addRow(QLabel("<span style='color:#8B949E'>默认 20，即只处理 blockNumber % 20 == 0 的区块</span>"))
-        root.addWidget(grp_filter)
+        # ===== 区块过滤 + 预警（并排） =====
+        row1 = QHBoxLayout(); row1.setSpacing(16)
 
-        # 预警设置
-        grp_alert = QGroupBox("预警规则")
-        form_alert = QFormLayout(grp_alert)
-        self.cb_alt = QCheckBox("启用单双交叉预警（单双单双…）")
+        grp_f = QGroupBox("区块过滤")
+        fl = QHBoxLayout(grp_f); fl.setSpacing(8)
+        fl.addWidget(QLabel("倍数:"))
+        self.sp_mult = _spin(cfg.filter.block_multiple, 1, 10000, max_w=100)
+        fl.addWidget(self.sp_mult); fl.addStretch()
+        row1.addWidget(grp_f, 1)
+
+        grp_a = QGroupBox("交叉预警")
+        al = QGridLayout(grp_a); al.setHorizontalSpacing(10); al.setVerticalSpacing(6)
+        self.cb_alt = QCheckBox("启用")
         self.cb_alt.setChecked(cfg.alert.alternation_enabled)
-        self.sp_alt_threshold = QSpinBox(); self.sp_alt_threshold.setRange(2, 50)
-        self.sp_alt_threshold.setValue(cfg.alert.alternation_threshold)
-        self.sp_cooldown = QSpinBox(); self.sp_cooldown.setRange(0, 50)
-        self.sp_cooldown.setValue(cfg.alert.cooldown_periods)
-        self.cb_sound = QCheckBox("触发时播放提示音")
+        self.sp_alt_threshold = _spin(cfg.alert.alternation_threshold, 2, 50, max_w=70)
+        self.sp_cooldown = _spin(cfg.alert.cooldown_periods, 0, 50, max_w=70)
+        self.cb_sound = QCheckBox("声音")
         self.cb_sound.setChecked(getattr(cfg.alert, "sound_enabled", True))
-        self.cb_bark = QCheckBox("触发时推送到手机（Bark）")
+        self.cb_bark = QCheckBox("Bark")
         self.cb_bark.setChecked(getattr(cfg.alert, "bark_enabled", True))
 
-        form_alert.addRow(self.cb_alt)
-        form_alert.addRow("交叉触发阈值:", self.sp_alt_threshold)
-        form_alert.addRow("触发冷却(期):", self.sp_cooldown)
-        form_alert.addRow(self.cb_sound)
-        form_alert.addRow(self.cb_bark)
-        root.addWidget(grp_alert)
+        al.addWidget(self.cb_alt, 0, 0)
+        al.addWidget(self.cb_sound, 0, 1)
+        al.addWidget(self.cb_bark, 0, 2)
+        al.addWidget(QLabel("阈值:"), 1, 0)
+        al.addWidget(self.sp_alt_threshold, 1, 1)
+        al.addWidget(QLabel("冷却:"), 1, 2)
+        al.addWidget(self.sp_cooldown, 1, 3)
+        row1.addWidget(grp_a, 2)
+        root.addLayout(row1)
 
-        # DeepSeek AI 预测
-        grp_ds = QGroupBox("DeepSeek V4 Flash AI 预测")
-        form_ds = QFormLayout(grp_ds)
-        self.cb_ds_enabled = QCheckBox("启用 DeepSeek AI 预测模型")
+        # ===== DeepSeek + Bark（并排） =====
+        row2 = QHBoxLayout(); row2.setSpacing(16)
+
+        grp_ds = QGroupBox("DeepSeek V4 Flash")
+        dl = QGridLayout(grp_ds); dl.setHorizontalSpacing(10); dl.setVerticalSpacing(6)
+        dl.setColumnStretch(1, 1)
+        self.cb_ds_enabled = QCheckBox("启用")
         self.cb_ds_enabled.setChecked(getattr(cfg.deepseek, "enabled", True))
-        self.ed_ds_key = QLineEdit(getattr(cfg.deepseek, "api_key", ""))
-        self.ed_ds_key.setEchoMode(QLineEdit.Password)
-        self.ed_ds_key.setPlaceholderText("在 platform.deepseek.com 获取 API Key")
-        self.ed_ds_base_url = QLineEdit(getattr(cfg.deepseek, "base_url", "https://api.deepseek.com"))
-        self.ed_ds_model = QLineEdit(getattr(cfg.deepseek, "model", "deepseek-v4-flash"))
-        self.sp_ds_timeout = QSpinBox(); self.sp_ds_timeout.setRange(5, 60)
-        self.sp_ds_timeout.setValue(getattr(cfg.deepseek, "timeout", 15))
-        self.sp_ds_timeout.setSuffix(" 秒")
-        self.sp_ds_history = QSpinBox(); self.sp_ds_history.setRange(20, 500)
-        self.sp_ds_history.setValue(getattr(cfg.deepseek, "max_history", 100))
-        self.sp_ds_history.setSuffix(" 期")
+        self.ed_ds_key = _line(getattr(cfg.deepseek, "api_key", ""), "API Key", password=True, max_w=220)
+        self.ed_ds_base_url = _line(getattr(cfg.deepseek, "base_url", "https://api.deepseek.com"), max_w=220)
+        self.ed_ds_model = _line(getattr(cfg.deepseek, "model", "deepseek-v4-flash"), max_w=160)
+        self.sp_ds_timeout = _spin(getattr(cfg.deepseek, "timeout", 15), 5, 60, " 秒")
+        self.sp_ds_history = _spin(getattr(cfg.deepseek, "max_history", 100), 20, 500, " 期")
 
-        form_ds.addRow(self.cb_ds_enabled)
-        form_ds.addRow("API Key:", self.ed_ds_key)
-        form_ds.addRow("Base URL:", self.ed_ds_base_url)
-        form_ds.addRow("模型:", self.ed_ds_model)
-        form_ds.addRow("超时:", self.sp_ds_timeout)
-        form_ds.addRow("历史期数:", self.sp_ds_history)
-        form_ds.addRow(QLabel(
-            "<span style='color:#8B949E'>利用上下文缓存，token 消耗极低（~¥0.15/天）</span>"
-        ))
-        root.addWidget(grp_ds)
+        dl.addWidget(self.cb_ds_enabled, 0, 0, 1, 2)
+        dl.addWidget(QLabel("Key:"), 1, 0); dl.addWidget(self.ed_ds_key, 1, 1)
+        dl.addWidget(QLabel("URL:"), 2, 0); dl.addWidget(self.ed_ds_base_url, 2, 1)
+        dl.addWidget(QLabel("模型:"), 3, 0); dl.addWidget(self.ed_ds_model, 3, 1)
+        dl.addWidget(QLabel("超时:"), 4, 0); dl.addWidget(self.sp_ds_timeout, 4, 1)
+        dl.addWidget(QLabel("历史:"), 5, 0); dl.addWidget(self.sp_ds_history, 5, 1)
+        row2.addWidget(grp_ds, 1)
 
-        # Bark 手机推送
-        grp_push = QGroupBox("Bark 手机推送（iOS）")
-        form_push = QFormLayout(grp_push)
-        self.ed_bark_key = QLineEdit(cfg.push.bark_key)
-        self.ed_bark_key.setPlaceholderText("Bark App 首页复制的设备 Key")
-        self.ed_bark_server = QLineEdit(cfg.push.bark_server or "https://api.day.app")
-        self.ed_bark_server.setPlaceholderText("https://api.day.app（自建可替换）")
+        grp_p = QGroupBox("Bark 推送")
+        pl = QGridLayout(grp_p); pl.setHorizontalSpacing(10); pl.setVerticalSpacing(6)
+        pl.setColumnStretch(1, 1)
+        self.ed_bark_key = _line(cfg.push.bark_key, "设备 Key", max_w=200)
+        self.ed_bark_server = _line(cfg.push.bark_server or "https://api.day.app", max_w=200)
         self.cb_bark_sound = QComboBox()
-        self.cb_bark_sound.setEditable(True)
-        self.cb_bark_sound.addItems([
-            "alarm", "bell", "minuet", "calypso", "chime", "glass",
-            "horn", "ladder", "multiwayinvitation", "newmail",
-            "newsflash", "suspense", "telegraph", "tweet", "update",
-        ])
+        self.cb_bark_sound.setEditable(True); self.cb_bark_sound.setMaximumWidth(130)
+        self.cb_bark_sound.addItems(["alarm", "bell", "minuet", "calypso", "chime", "glass", "horn", "newmail", "telegraph"])
         self.cb_bark_sound.setCurrentText(cfg.push.bark_sound or "alarm")
-        self.ed_bark_group = QLineEdit(cfg.push.bark_group or "hash_alert")
+        self.ed_bark_group = _line(cfg.push.bark_group or "hash_alert", max_w=130)
 
-        form_push.addRow("Bark Key:", self.ed_bark_key)
-        form_push.addRow("服务器:", self.ed_bark_server)
-        form_push.addRow("铃声:", self.cb_bark_sound)
-        form_push.addRow("分组:", self.ed_bark_group)
-        form_push.addRow(QLabel(
-            "<span style='color:#8B949E'>留空 Bark Key 则不推送；支持自建 Bark Server</span>"
-        ))
-        root.addWidget(grp_push)
+        pl.addWidget(QLabel("Key:"), 0, 0); pl.addWidget(self.ed_bark_key, 0, 1)
+        pl.addWidget(QLabel("服务器:"), 1, 0); pl.addWidget(self.ed_bark_server, 1, 1)
+        pl.addWidget(QLabel("铃声:"), 2, 0); pl.addWidget(self.cb_bark_sound, 2, 1)
+        pl.addWidget(QLabel("分组:"), 3, 0); pl.addWidget(self.ed_bark_group, 3, 1)
+        row2.addWidget(grp_p, 1)
+        root.addLayout(row2)
 
-        # 按钮
-        btns = QHBoxLayout()
-        btns.addStretch()
-        self.btn_test_bark = QPushButton("测试 Bark 推送")
+        # ===== 按钮 =====
+        btns = QHBoxLayout(); btns.addStretch()
+        self.btn_test_bark = QPushButton("测试 Bark")
         self.btn_save = QPushButton("保存设置")
-        btns.addWidget(self.btn_test_bark)
-        btns.addWidget(self.btn_save)
+        self.btn_save.setObjectName("primary")
+        btns.addWidget(self.btn_test_bark); btns.addSpacing(12); btns.addWidget(self.btn_save)
         root.addLayout(btns)
-
         root.addStretch()
 
         self.btn_save.clicked.connect(self._on_save)
@@ -151,34 +167,30 @@ class SettingsPanel(QWidget):
         cfg.alert.cooldown_periods = int(self.sp_cooldown.value())
         cfg.alert.sound_enabled = self.cb_sound.isChecked()
         cfg.alert.bark_enabled = self.cb_bark.isChecked()
-        cfg.push.bark_key = self.ed_bark_key.text().strip()
-        cfg.push.bark_server = self.ed_bark_server.text().strip() or "https://api.day.app"
-        cfg.push.bark_sound = self.cb_bark_sound.currentText().strip() or "alarm"
-        cfg.push.bark_group = self.ed_bark_group.text().strip() or "hash_alert"
         cfg.deepseek.enabled = self.cb_ds_enabled.isChecked()
         cfg.deepseek.api_key = self.ed_ds_key.text().strip()
         cfg.deepseek.base_url = self.ed_ds_base_url.text().strip() or "https://api.deepseek.com"
         cfg.deepseek.model = self.ed_ds_model.text().strip() or "deepseek-v4-flash"
         cfg.deepseek.timeout = int(self.sp_ds_timeout.value())
         cfg.deepseek.max_history = int(self.sp_ds_history.value())
+        cfg.push.bark_key = self.ed_bark_key.text().strip()
+        cfg.push.bark_server = self.ed_bark_server.text().strip() or "https://api.day.app"
+        cfg.push.bark_sound = self.cb_bark_sound.currentText().strip() or "alarm"
+        cfg.push.bark_group = self.ed_bark_group.text().strip() or "hash_alert"
         return cfg
 
     def _on_save(self) -> None:
-        cfg = self._collect()
-        self.saved.emit(cfg)
+        self.saved.emit(self._collect())
 
     def _on_test_bark(self) -> None:
-        """不落盘地直接用当前表单里的 Bark 配置发一条测试推送."""
-        from ..utils.notifier import Notifier  # 延迟 import 防循环
+        from ..utils.notifier import Notifier
         key = self.ed_bark_key.text().strip()
         if not key:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(self, "提示", "请先填写 Bark Key")
             return
-        notifier = Notifier(self)
-        notifier.push_bark(
-            title="Hash Trading Bot 测试推送",
-            body="如果你收到这条通知，说明 Bark 配置正常 ✅",
+        Notifier(self).push_bark(
+            title="Hash Trading Bot 测试", body="Bark 配置正常",
             key=key,
             server=self.ed_bark_server.text().strip() or "https://api.day.app",
             sound=self.cb_bark_sound.currentText().strip() or "alarm",
