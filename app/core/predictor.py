@@ -1,17 +1,18 @@
-"""AI 预测器 - 本地模型(Markov+频率) + DeepSeek V4 Flash LLM 集成.
+"""AI 预测器 - 本地模型(Markov+3-gram+频率) + DeepSeek V4 Flash LLM 集成.
 
 - 本地模型：同步调用，<1ms
 - DeepSeek：异步 HTTP，利用上下文缓存降低 token 消耗
-- Ensemble：加权投票产出最终信号
+- Ensemble：动态权重投票（根据近期命中率自适应调整）
 """
 from __future__ import annotations
 
 import json
 import logging
 import threading
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 
@@ -30,7 +31,7 @@ class Signal:
 
     prediction: str          # "odd" / "even"
     confidence: float        # 0.0 ~ 1.0
-    model: str               # "markov" / "frequency" / "deepseek" / "ensemble"
+    model: str               # "markov" / "ngram3" / "frequency" / "deepseek" / "ensemble"
     next_block_number: Optional[int] = None
     reason: str = ""         # DeepSeek 模型会给出的思考理由
 
@@ -54,40 +55,117 @@ class Prediction:
     reason: str = ""         # 无信号时的说明
 
 
-# ==================== DeepSeek Prompt ====================
+# ==================== DeepSeek Prompt (优化版) ====================
 
 _SYSTEM_PROMPT = """你是一个专业的二元序列分析和预测专家。你的任务是分析TRON区块链区块哈希末位数字的奇偶(单双)序列，预测下一期的结果。
 
+分析方法：
+1. 观察近期趋势（最后10期的走向）
+2. 检测交替模式（单双单双...）
+3. 检测连号趋势（连续单或连续双后的反转概率）
+4. 统计近期单双比例偏离度
+5. 观察3-gram模式出现频率
+
 规则：
 - 序列中 1=单(奇数), 0=双(偶数)
-- 你需要寻找序列中的统计规律、周期性、趋势反转等模式
-- 注意：区块哈希本质接近随机，不要过度自信
+- confidence 应反映你的真实把握，50%=完全猜测，70%+=有一定把握
+- 不要过度自信，区块哈希接近随机
+
+示例：
+输入: [1,0,1,0,1,0,1,0,1,0]
+输出: {"prediction": 1, "confidence": 0.68, "reason": "强交替模式"}
+
+输入: [1,1,1,0,0,0,1,1,1,0]
+输出: {"prediction": 0, "confidence": 0.62, "reason": "3连后反转"}
+
+输入: [0,1,0,0,1,1,0,1,0,1]
+输出: {"prediction": 0, "confidence": 0.55, "reason": "近期单多回归"}
 
 请严格按以下JSON格式回复，不要输出其他内容：
-{"prediction": 1, "confidence": 0.62, "reason": "简短理由"}
-
-其中：
-- prediction: 1=单, 0=双
-- confidence: 0.50~0.95 之间的浮点数（0.5=完全不确定）
-- reason: 10字以内的简短理由"""
+{"prediction": 1, "confidence": 0.62, "reason": "简短理由"}"""
 
 
-def _build_user_prompt(sequence: List[int]) -> str:
-    """构造用户消息。保持前缀尽可能稳定以触发 DeepSeek 上下文缓存."""
+def _build_user_prompt(sequence: List[int], recent_accuracy: Optional[float] = None) -> str:
+    """构造用户消息。保持前缀尽可能稳定以触发 DeepSeek 上下文缓存.
+
+    增加反馈循环：告知模型最近的命中率，让它自适应调整策略。
+    """
     seq_str = ",".join(str(x) for x in sequence)
-    return f"最近{len(sequence)}期结果（从旧到新）：[{seq_str}]\n请预测下一期。"
+    msg = f"最近{len(sequence)}期结果（从旧到新）：[{seq_str}]"
+    if recent_accuracy is not None:
+        msg += f"\n[反馈] 你最近50次预测命中率: {recent_accuracy*100:.1f}%"
+        if recent_accuracy < 0.45:
+            msg += "（偏低，请尝试不同策略）"
+        elif recent_accuracy > 0.55:
+            msg += "（不错，继续当前策略）"
+    msg += "\n请预测下一期。"
+    return msg
+
+
+# ==================== 动态权重管理 ====================
+
+class DynamicWeights:
+    """根据各模型近期命中率动态调整权重.
+
+    - 基础权重: markov=1.0, ngram3=1.0, frequency=1.0, deepseek=1.5
+    - 近50期命中率 > 55%: 权重 * 1.3
+    - 近50期命中率 < 45%: 权重 * 0.5
+    - 样本不足(<20期): 使用基础权重
+    """
+
+    def __init__(self):
+        self._base_weights = {
+            "markov": 1.0,
+            "ngram3": 1.2,
+            "frequency": 0.8,
+            "deepseek": 1.5,
+        }
+        # 记录各模型的对错历史（用于计算动态权重）
+        self._history: Dict[str, List[bool]] = defaultdict(list)
+        self._max_history = 50
+
+    def record(self, model: str, correct: bool) -> None:
+        h = self._history[model]
+        h.append(correct)
+        if len(h) > self._max_history:
+            h.pop(0)
+
+    def get_weight(self, model: str) -> float:
+        base = self._base_weights.get(model, 1.0)
+        h = self._history.get(model)
+        if not h or len(h) < 20:
+            return base
+        accuracy = sum(h) / len(h)
+        if accuracy > 0.55:
+            return base * 1.3
+        elif accuracy < 0.45:
+            return base * 0.5
+        return base
+
+    def get_accuracy(self, model: str) -> Optional[float]:
+        """返回近期命中率，样本不足时返回 None."""
+        h = self._history.get(model)
+        if not h or len(h) < 5:
+            return None
+        return sum(h) / len(h)
+
+    def all_weights(self) -> Dict[str, float]:
+        return {m: self.get_weight(m) for m in self._base_weights}
 
 
 class Predictor:
     """集成预测器：
-    - Markov: 单步转移概率
+    - Markov: 单步转移概率 (window=50)
+    - N-gram3: 3阶马尔可夫（看前3期组合模式）
     - Frequency: 近窗口频率反转
-    - DeepSeek V4 Flash: LLM 模式识别（异步、可选、带超时 fallback）
+    - DeepSeek V4 Flash: LLM 模式识别（带 few-shot + 反馈循环）
+    - Ensemble: 动态加权投票
     """
 
     def __init__(self, cfg: PredictorConfig, deepseek_cfg: Optional[DeepSeekConfig] = None):
         self.cfg = cfg
         self.deepseek_cfg = deepseek_cfg
+        self.dynamic_weights = DynamicWeights()
         # DeepSeek 最后一次有效返回（缓存，当 API 超时/失败时用旧结果）
         self._deepseek_last_signal: Optional[Signal] = None
         self._deepseek_lock = threading.Lock()
@@ -98,9 +176,14 @@ class Predictor:
     def update_deepseek_config(self, cfg: DeepSeekConfig) -> None:
         self.deepseek_cfg = cfg
 
+    def feed_result(self, model: str, correct: bool) -> None:
+        """每期结算后外部调用，更新动态权重."""
+        self.dynamic_weights.record(model, correct)
+
     # ==================== 本地模型 ====================
 
     def _markov(self, analyzer: Analyzer) -> Optional[Signal]:
+        """1阶 Markov: P(next | current)."""
         latest = analyzer.latest()
         if latest is None or not latest.is_valid:
             return None
@@ -118,7 +201,48 @@ class Predictor:
             return Signal(PARITY_ODD, p_odd, model="markov")
         return Signal(PARITY_EVEN, p_even, model="markov")
 
+    def _ngram3(self, analyzer: Analyzer) -> Optional[Signal]:
+        """3阶 N-gram Markov: P(next | 前3期组合).
+
+        比如前3期是"单双单"，统计历史上这个pattern后面出单和出双的概率。
+        """
+        history = [p.parity for p in analyzer.last(200) if p.is_valid]
+        if len(history) < 10:
+            return None
+
+        # 统计所有3-gram后面跟什么
+        counts: Dict[Tuple[str, str, str], Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for i in range(len(history) - 3):
+            key = (history[i], history[i + 1], history[i + 2])
+            nxt = history[i + 3]
+            if nxt in (PARITY_ODD, PARITY_EVEN):
+                counts[key][nxt] += 1
+
+        # 查最近3期
+        if len(history) < 3:
+            return None
+        current_key = (history[-3], history[-2], history[-1])
+        dist = counts.get(current_key)
+        if not dist:
+            return None
+
+        total = sum(dist.values())
+        if total < 3:  # 样本太少不可靠
+            return None
+
+        p_odd = dist.get(PARITY_ODD, 0) / total
+        p_even = dist.get(PARITY_EVEN, 0) / total
+
+        if p_odd > p_even:
+            return Signal(PARITY_ODD, p_odd, model="ngram3",
+                          reason=f"3-gram {total}样本")
+        elif p_even > p_odd:
+            return Signal(PARITY_EVEN, p_even, model="ngram3",
+                          reason=f"3-gram {total}样本")
+        return None
+
     def _frequency(self, analyzer: Analyzer) -> Optional[Signal]:
+        """近窗口频率反转（均值回归）."""
         window = max(5, self.cfg.density_window * 3)
         recent = [p for p in analyzer.last(window) if p.is_valid]
         if not recent:
@@ -151,7 +275,9 @@ class Predictor:
         if len(sequence) < 10:
             return None
 
-        user_msg = _build_user_prompt(sequence)
+        # 获取 deepseek 最近命中率用于反馈循环
+        recent_acc = self.dynamic_weights.get_accuracy("deepseek")
+        user_msg = _build_user_prompt(sequence, recent_accuracy=recent_acc)
 
         try:
             url = f"{cfg.base_url.rstrip('/')}/v1/chat/completions"
@@ -206,7 +332,7 @@ class Predictor:
             with self._deepseek_lock:
                 self._deepseek_last_signal = sig
 
-            # 记录 token 使用（日志级别 DEBUG）
+            # 记录 token 使用
             usage = data.get("usage", {})
             cache_hit = usage.get("prompt_cache_hit_tokens", 0)
             cache_miss = usage.get("prompt_cache_miss_tokens", 0)
@@ -263,7 +389,7 @@ class Predictor:
         signals: List[Signal] = []
 
         # 本地模型（同步，极快）
-        for sig in (self._markov(analyzer), self._frequency(analyzer)):
+        for sig in (self._markov(analyzer), self._ngram3(analyzer), self._frequency(analyzer)):
             if sig is not None:
                 signals.append(sig)
 
@@ -275,13 +401,12 @@ class Predictor:
         if not signals:
             return Prediction(signals=[], best=None, has_signal=False, reason="暂无可用模型输出")
 
-        # 加权投票集成
-        ds_weight = float(getattr(self.deepseek_cfg, "weight", 1.5)) if self.deepseek_cfg else 1.0
+        # 动态加权投票集成
         odd_score = 0.0
         even_score = 0.0
         total_weight = 0.0
         for s in signals:
-            w = ds_weight if s.model == "deepseek" else 1.0
+            w = self.dynamic_weights.get_weight(s.model)
             if s.prediction == PARITY_ODD:
                 odd_score += s.confidence * w
             else:

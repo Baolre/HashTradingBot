@@ -253,6 +253,10 @@ class MainWindow(QMainWindow):
         # 预测 tracker 顺序：先 settle 上一次，再跑新预测
         try:
             self.tracker.settle(period)
+            # 动态权重反馈：把上一期各模型的对错喂给 predictor
+            for rec in self.tracker.recent(10):
+                if rec.actual is not None and rec.correct is not None:
+                    self.predictor.feed_result(rec.model, rec.correct)
         except Exception as e:
             logger.warning("tracker.settle 失败: %s", e)
 

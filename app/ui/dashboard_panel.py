@@ -437,14 +437,14 @@ class MetricStrip(QFrame):
 # ==================== 最近开奖对照表 ====================
 
 class RecentBlocksCard(Card):
-    """最近 N 期的：区块号 / 末位 / 实际 / AI 预测 / 命中."""
+    """最近 N 期的：区块号 / 末位 / 实际 / AI 预测 / 置信度 / 命中."""
 
     def __init__(self, parent=None):
         super().__init__("最近开奖 & AI 对照（上 = 最新）", parent=parent)
         body = self.body()
 
-        self.tbl = QTableWidget(0, 5)
-        self.tbl.setHorizontalHeaderLabels(["区块号", "末位", "实际", "AI 预测", "命中"])
+        self.tbl = QTableWidget(0, 6)
+        self.tbl.setHorizontalHeaderLabels(["区块号", "末位", "实际", "AI 预测", "置信度", "命中"])
         self.tbl.horizontalHeader().setStretchLastSection(True)
         self.tbl.verticalHeader().setVisible(False)
         self.tbl.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -453,13 +453,9 @@ class RecentBlocksCard(Card):
 
     def refresh(self, analyzer: Analyzer, tracker) -> None:
         periods = list(reversed(analyzer.last(40)))  # 最新在上
-        # 把 tracker 的 ensemble 记录按 block_number/顺序映射
         rec_list = []
         if tracker is not None:
             rec_list = [r for r in tracker.recent(200) if r.model == "ensemble"]
-        # 我们无法直接靠 block_number 对齐（tracker 不存 block_number），
-        # 约定：tracker 记录顺序 == analyzer 收到顺序。最新记录对应最新 period。
-        # 由于 tracker 在 ingest 之后 settle，所以 recent_list[-i-1] 对应 periods_reversed[i]
         self.tbl.setRowCount(len(periods))
         for row_i, p in enumerate(periods):
             # 区块号
@@ -469,12 +465,21 @@ class RecentBlocksCard(Card):
             # 实际
             color_actual = "odd" if p.parity == PARITY_ODD else ("even" if p.parity == PARITY_EVEN else None)
             self.tbl.setItem(row_i, 2, _cell(p.parity_label, color=color_actual))
-            # AI 预测（对应 rec_list[-row_i-1]）
+            # AI 预测 + 置信度 + 命中
             rec = rec_list[-row_i - 1] if row_i < len(rec_list) else None
             if rec is not None:
                 color_pred = "odd" if rec.prediction == PARITY_ODD else ("even" if rec.prediction == PARITY_EVEN else None)
                 pred_text = rec.pred_label + (" ★" if rec.has_signal else "")
                 self.tbl.setItem(row_i, 3, _cell(pred_text, color=color_pred))
+                # 置信度列
+                conf_text = f"{rec.confidence * 100:.0f}%"
+                conf_cell = _cell(conf_text)
+                if rec.confidence >= 0.70:
+                    conf_cell.setForeground(Qt.green)
+                elif rec.confidence >= 0.60:
+                    conf_cell.setForeground(Qt.yellow)
+                self.tbl.setItem(row_i, 4, conf_cell)
+                # 命中列
                 if rec.correct is True:
                     mark = _cell("✓")
                     mark.setForeground(Qt.green)
@@ -483,10 +488,11 @@ class RecentBlocksCard(Card):
                     mark.setForeground(Qt.red)
                 else:
                     mark = _cell("-")
-                self.tbl.setItem(row_i, 4, mark)
+                self.tbl.setItem(row_i, 5, mark)
             else:
                 self.tbl.setItem(row_i, 3, _cell("-"))
                 self.tbl.setItem(row_i, 4, _cell("-"))
+                self.tbl.setItem(row_i, 5, _cell("-"))
 
 
 # ==================== 分析卡（矩阵 + 频率） ====================
