@@ -1,8 +1,12 @@
-"""主窗口 - 走势/AI信号/模拟/明细/预警/设置 + 倒计时+网络灯+懒加载."""
+"""主窗口 - 一屏 Dashboard + 设置两个 Tab."""
 from __future__ import annotations
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
-                                QStatusBar, QTabWidget, QVBoxLayout, QWidget)
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import (
+    QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QProgressBar,
+    QPushButton, QStatusBar, QTabWidget, QVBoxLayout, QWidget,
+)
+
 from ..core.alerter import AlertEvent, Alerter
 from ..core.analyzer import Analyzer
 from ..core.monitor import MonitorController
@@ -13,13 +17,11 @@ from ..storage.db import Storage
 from ..utils.config import AppConfig, save_config
 from ..utils.logger import get_logger
 from ..utils.notifier import Notifier
-from .alert_panel import AlertPanel
-from .data_table import DataTablePanel
-from .probability_panel import ProbabilityPanel
+from .dashboard_panel import DashboardPanel
 from .settings_panel import SettingsPanel
-from .sim_panel import SimPanel
-from .theme import COLOR_EVEN, COLOR_ODD, COLOR_SUB, COLOR_BIG, QSS
-from .trend_view import TrendView
+from .theme import (
+    COLOR_ACCENT, COLOR_BIG, COLOR_EVEN, COLOR_ODD, COLOR_SUB, COLOR_TEXT, QSS,
+)
 
 logger = get_logger(__name__)
 
@@ -28,31 +30,34 @@ class MainWindow(QMainWindow):
     def __init__(self, cfg: AppConfig):
         super().__init__()
         self.cfg = cfg
-        self.setWindowTitle("Hash Trading Bot - 区块单双监控")
-        self.resize(1200, 800)
+        self.setWindowTitle("Hash Trading Bot  ·  区块单双监控")
+        self.resize(1360, 860)
         self.setStyleSheet(QSS)
 
+        # ---- 业务对象 ----
         self.storage = Storage(cfg.storage.db_path)
         self.analyzer = Analyzer(max_history=cfg.analyzer.max_history)
         self.alerter = Alerter(cfg.alert)
         self.predictor = Predictor(cfg.predictor)
-        self.tracker = PredictionTracker(max_history=max(1000, cfg.analyzer.max_history))
+        self.tracker = PredictionTracker(
+            max_history=max(1000, cfg.analyzer.max_history)
+        )
         self.simulator = Simulator(cfg.sim, self.predictor)
         self.notifier = Notifier(self)
         self.monitor = MonitorController(cfg, self.analyzer, self.alerter, self.storage)
 
         self._countdown = 0
         self._network_ok = False
-        self._alert_unread = 0
         self._last_prediction = None
 
+        # 本地历史
         try:
             for p in self.storage.load_recent_blocks(cfg.analyzer.max_history):
                 self.analyzer.ingest(p)
         except Exception as e:
             logger.warning("加载历史失败: %s", e)
 
-        # 基于历史做一次命中率回测，让用户打开就能看到数据
+        # 基于历史做一次命中率回测
         try:
             self.tracker.backtest(self.predictor, self.analyzer)
         except Exception as e:
@@ -62,73 +67,108 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._refresh_all()
 
+        # 倒计时
         self._countdown_timer = QTimer(self)
         self._countdown_timer.setInterval(1000)
         self._countdown_timer.timeout.connect(self._tick_countdown)
 
-    def _build_ui(self):
+    # ====================== UI ======================
+    def _build_ui(self) -> None:
         central = QWidget()
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # 顶部栏
-        top_bar = QHBoxLayout()
-        top_bar.setContentsMargins(12, 8, 12, 8)
+        # --- 顶部栏（状态 chip + 倒计时 + 进度 + 启停按钮） ---
+        topbar = QFrame()
+        topbar.setObjectName("topbar")
+        topbar.setFixedHeight(60)
+        tb = QHBoxLayout(topbar)
+        tb.setContentsMargins(20, 10, 20, 10)
+        tb.setSpacing(14)
+
         title = QLabel("Hash Trading Bot")
-        tf = title.font(); tf.setBold(True); tf.setPointSize(14); title.setFont(tf)
-        top_bar.addWidget(title)
+        title.setObjectName("h1")
+        tb.addWidget(title)
 
-        self.lbl_network = QLabel("---")
-        self.lbl_network.setStyleSheet("font-size: 12px;")
-        top_bar.addSpacing(8); top_bar.addWidget(self.lbl_network)
+        self.lbl_status_chip = QLabel("未启动")
+        self.lbl_status_chip.setObjectName("chipIdle")
+        tb.addWidget(self.lbl_status_chip)
 
-        self.lbl_conn = QLabel("未启动")
-        self.lbl_conn.setStyleSheet(f"color: {COLOR_SUB};")
-        top_bar.addSpacing(4); top_bar.addWidget(self.lbl_conn)
-        top_bar.addSpacing(16)
+        self.lbl_network = QLabel("链路  ·  未连接")
+        self.lbl_network.setObjectName("mutedSmall")
+        tb.addWidget(self.lbl_network)
 
-        self.lbl_countdown = QLabel("-- s")
-        self.lbl_countdown.setStyleSheet(f"color: {COLOR_BIG}; font-weight: bold; font-size: 13px;")
-        top_bar.addWidget(self.lbl_countdown)
-        top_bar.addStretch()
+        tb.addStretch()
 
-        self.lbl_total = QLabel("0 期")
-        self.lbl_total.setStyleSheet(f"color: {COLOR_SUB};")
-        top_bar.addWidget(self.lbl_total)
-        top_bar.addSpacing(12)
+        # 倒计时
+        cd_box = QVBoxLayout(); cd_box.setSpacing(0); cd_box.setContentsMargins(0, 0, 0, 0)
+        cap = QLabel("下一期")
+        cap.setObjectName("metricLabel")
+        cap.setAlignment(Qt.AlignRight)
+        self.lbl_countdown = QLabel("--")
+        self.lbl_countdown.setStyleSheet(
+            f"font-size: 18px; font-weight: bold; color: {COLOR_BIG};"
+        )
+        self.lbl_countdown.setAlignment(Qt.AlignRight)
+        cd_box.addWidget(cap); cd_box.addWidget(self.lbl_countdown)
+        tb.addLayout(cd_box)
 
+        tb.addSpacing(20)
+
+        # 总期数
+        tot_box = QVBoxLayout(); tot_box.setSpacing(0); tot_box.setContentsMargins(0, 0, 0, 0)
+        cap2 = QLabel("累计期数")
+        cap2.setObjectName("metricLabel"); cap2.setAlignment(Qt.AlignRight)
+        self.lbl_total = QLabel("0")
+        self.lbl_total.setStyleSheet("font-size: 18px; font-weight: bold;")
+        self.lbl_total.setAlignment(Qt.AlignRight)
+        tot_box.addWidget(cap2); tot_box.addWidget(self.lbl_total)
+        tb.addLayout(tot_box)
+
+        tb.addSpacing(20)
+
+        # 回补进度条（默认隐藏）
+        self.backfill_bar = QProgressBar()
+        self.backfill_bar.setFixedWidth(220)
+        self.backfill_bar.setVisible(False)
+        self.backfill_bar.setRange(0, 100)
+        self.backfill_bar.setFormat("补齐中 %p%")
+        tb.addWidget(self.backfill_bar)
+
+        tb.addSpacing(12)
+
+        # 启停按钮
         self.btn_start = QPushButton("开始监控")
-        self.btn_start.setStyleSheet("QPushButton{background:#1f6feb;color:white;font-weight:bold;padding:6px 16px;border-radius:4px;}")
-        self.btn_stop = QPushButton("停止"); self.btn_stop.setEnabled(False)
-        top_bar.addWidget(self.btn_start); top_bar.addWidget(self.btn_stop)
+        self.btn_start.setObjectName("primary")
+        self.btn_stop = QPushButton("停止")
+        self.btn_stop.setObjectName("danger")
+        self.btn_stop.setEnabled(False)
+        tb.addWidget(self.btn_start)
+        tb.addWidget(self.btn_stop)
 
-        top_wrap = QWidget(); top_wrap.setLayout(top_bar)
-        root.addWidget(top_wrap)
+        root.addWidget(topbar)
 
-        # Tabs
+        # --- Tabs ---
         self.tabs = QTabWidget()
-        self.trend_view = TrendView(column_max=self.cfg.ui.column_max, dot_size=self.cfg.ui.dot_size, column_gap=self.cfg.ui.column_gap)
-        self.prob_panel = ProbabilityPanel()
-        self.sim_panel = SimPanel()
-        self.data_table = DataTablePanel()
-        self.alert_panel = AlertPanel()
+        self.tabs.setDocumentMode(True)
+        self.dashboard = DashboardPanel(
+            column_max=self.cfg.ui.column_max,
+            dot_size=self.cfg.ui.dot_size,
+            column_gap=self.cfg.ui.column_gap,
+        )
         self.settings_panel = SettingsPanel(self.cfg)
-
-        self.tabs.addTab(self.trend_view, "走势")
-        self.tabs.addTab(self.prob_panel, "AI信号")
-        self.tabs.addTab(self.sim_panel, "模拟")
-        self.tabs.addTab(self.data_table, "明细")
-        self._alert_tab_idx = self.tabs.addTab(self.alert_panel, "预警")
+        self.tabs.addTab(self.dashboard, "Dashboard")
         self.tabs.addTab(self.settings_panel, "设置")
-        self.tabs.currentChanged.connect(self._on_tab_changed)
-
         root.addWidget(self.tabs, 1)
-        self.setCentralWidget(central)
-        self.setStatusBar(QStatusBar())
-        self.statusBar().showMessage("就绪")
 
-    def _connect_signals(self):
+        self.setCentralWidget(central)
+
+        # 状态栏
+        self.setStatusBar(QStatusBar())
+        self.statusBar().showMessage("就绪  ·  点击右上角【开始监控】开始")
+
+    def _connect_signals(self) -> None:
         self.btn_start.clicked.connect(self.start_monitor)
         self.btn_stop.clicked.connect(self.stop_monitor)
         self.monitor.block_received.connect(self._on_block)
@@ -137,120 +177,110 @@ class MainWindow(QMainWindow):
         self.monitor.error_occurred.connect(self._on_error)
         self.monitor.backfill_progress.connect(self._on_backfill_progress)
         self.settings_panel.saved.connect(self._on_settings_saved)
-        self.sim_panel.btn_start.clicked.connect(self._sim_start)
-        self.sim_panel.btn_stop.clicked.connect(self._sim_stop)
-        self.sim_panel.btn_reset.clicked.connect(self._sim_reset)
         try:
-            self.alert_panel.load_history(self.storage.load_recent_alerts(200))
+            self.dashboard.load_alert_history(
+                self.storage.load_recent_alerts(200)
+            )
         except Exception:
             pass
 
-    # ==================== 监控 ====================
-    def start_monitor(self):
+    # ====================== 监控控制 ======================
+    def start_monitor(self) -> None:
         if not self.cfg.api.trongrid_api_key:
-            QMessageBox.warning(self, "提示", "请先在【设置】页填写 API Key。")
+            QMessageBox.warning(self, "提示", "请先在【设置】页填写 TronGrid API Key。")
             self.tabs.setCurrentWidget(self.settings_panel)
             return
         self.monitor.start()
-        self.btn_start.setEnabled(False); self.btn_stop.setEnabled(True)
-        self.lbl_conn.setText("运行中"); self.lbl_conn.setStyleSheet(f"color:{COLOR_EVEN};")
+        self.btn_start.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self.lbl_status_chip.setText("● 运行中")
+        self.lbl_status_chip.setObjectName("chipOk")
+        self._repolish(self.lbl_status_chip)
         self._set_network(True)
         self._countdown = max(1, self.cfg.filter.block_multiple) * 3
         self._countdown_timer.start()
 
-    def stop_monitor(self):
+    def stop_monitor(self) -> None:
         self.monitor.stop()
-        self.btn_start.setEnabled(True); self.btn_stop.setEnabled(False)
-        self.lbl_conn.setText("已停止"); self.lbl_conn.setStyleSheet(f"color:{COLOR_ODD};")
+        self.btn_start.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self.lbl_status_chip.setText("● 已停止")
+        self.lbl_status_chip.setObjectName("chipErr")
+        self._repolish(self.lbl_status_chip)
         self._set_network(False)
         self._countdown_timer.stop()
-        self.lbl_countdown.setText("-- s")
+        self.lbl_countdown.setText("--")
 
-    # ==================== 倒计时 ====================
-    def _tick_countdown(self):
+    # ====================== 倒计时 ======================
+    def _tick_countdown(self) -> None:
         if self._countdown > 0:
             self._countdown -= 1
         self.lbl_countdown.setText(f"{self._countdown}s")
-        c = COLOR_ODD if self._countdown <= 10 else COLOR_BIG
-        self.lbl_countdown.setStyleSheet(f"color:{c};font-weight:bold;font-size:13px;")
+        color = COLOR_ODD if self._countdown <= 10 else COLOR_BIG
+        self.lbl_countdown.setStyleSheet(
+            f"font-size: 18px; font-weight: bold; color: {color};"
+        )
 
-    def _reset_countdown(self):
+    def _reset_countdown(self) -> None:
         self._countdown = max(1, self.cfg.filter.block_multiple) * 3
 
-    # ==================== 网络灯 ====================
-    def _set_network(self, ok: bool):
+    # ====================== 网络状态 ======================
+    def _set_network(self, ok: bool) -> None:
         self._network_ok = ok
         if ok:
-            self.lbl_network.setText("[OK]")
-            self.lbl_network.setStyleSheet(f"color:{COLOR_EVEN};font-size:12px;font-weight:bold;")
+            self.lbl_network.setText("● 链路  ·  已连接")
+            self.lbl_network.setStyleSheet(f"color: {COLOR_EVEN}; font-size: 11px;")
         else:
-            self.lbl_network.setText("[X]")
-            self.lbl_network.setStyleSheet(f"color:{COLOR_ODD};font-size:12px;font-weight:bold;")
+            self.lbl_network.setText("● 链路  ·  未连接")
+            self.lbl_network.setStyleSheet(f"color: {COLOR_SUB}; font-size: 11px;")
 
-    # ==================== 预警角标 ====================
-    def _update_alert_badge(self):
-        text = f"预警 ({self._alert_unread})" if self._alert_unread > 0 else "预警"
-        self.tabs.setTabText(self._alert_tab_idx, text)
+    @staticmethod
+    def _repolish(w: QWidget) -> None:
+        w.style().unpolish(w)
+        w.style().polish(w)
 
-    def _on_tab_changed(self, index: int):
-        if index == self._alert_tab_idx:
-            self._alert_unread = 0
-            self._update_alert_badge()
-
-    # ==================== 数据到达 ====================
-    def _on_block(self, period):
+    # ====================== 数据回调 ======================
+    def _on_block(self, period) -> None:
         self._set_network(True)
         self._reset_countdown()
+
         s = self.analyzer.stats
-        self.lbl_total.setText(f"{s.total} 期")
+        self.lbl_total.setText(str(s.total))
 
-        # 走势页（始终刷新）
-        self.trend_view.on_new_period(period, s.odd_total, s.even_total)
-        self.trend_view.refresh(self.analyzer)
+        # 走势卡增量刷新
+        self.dashboard.on_new_period(period, s.odd_total, s.even_total)
 
-        # AI 预测命中跟踪：先用本期结算上次的预测，再基于最新数据产生新预测
+        # 预测 tracker 顺序：先 settle 上一次，再跑新预测
         try:
             self.tracker.settle(period)
         except Exception as e:
             logger.warning("tracker.settle 失败: %s", e)
 
-        # AI 预测
         self._last_prediction = self.predictor.predict(self.analyzer)
         try:
             self.tracker.record(self._last_prediction)
         except Exception as e:
             logger.warning("tracker.record 失败: %s", e)
-        self.trend_view.update_ai_signal(self._last_prediction)
 
-        # 珠盘路（始终追加数据）
-
-        # 模拟（始终处理下注，不管是否在模拟Tab）
+        # 模拟（保留后端逻辑，无 UI）
         if self.simulator.is_running:
-            record = self.simulator.on_new_period(period, self.analyzer)
-            if record:
-                self.sim_panel.append_record(record)
-                self.sim_panel.refresh(self.simulator.state)
-                self.sim_panel.update_curve(self.simulator.balance_curve())
+            try:
+                self.simulator.on_new_period(period, self.analyzer)
+            except Exception as e:
+                logger.warning("simulator.on_new_period 失败: %s", e)
 
-        # 懒加载：只刷新当前可见Tab
-        current = self.tabs.currentWidget()
-        if current is self.prob_panel:
-            self.prob_panel.refresh(self.analyzer, self._last_prediction, self.tracker)
-        elif current is self.data_table:
-            self.data_table.refresh(self.analyzer)
+        # Dashboard 其他部分全量刷新（都在一个页面，不需要懒加载了）
+        self.dashboard.refresh_all(self.analyzer, self._last_prediction, self.tracker)
 
         self.statusBar().showMessage(
-            f"#{period.block_number} 末位={period.digit} {period.parity_label}"
+            f"#{period.block_number}  末位={period.digit}  {period.parity_label}"
         )
 
-    def _on_alert(self, event: AlertEvent):
-        self.alert_panel.prepend_event(event)
-        if self.tabs.currentWidget() is not self.alert_panel:
-            self._alert_unread += 1
-            self._update_alert_badge()
-        self.alert_panel.show_popup(event, self)
+    def _on_alert(self, event: AlertEvent) -> None:
+        self.dashboard.on_alert(event)
+        self.dashboard.show_alert_popup(event, self)
 
-        # 交叉预警 → 声音 + 手机推送
+        # 交叉预警 → 声音 + Bark 手机推送
         if getattr(event, "kind", "") == "alternation":
             try:
                 if getattr(self.cfg.alert, "sound_enabled", True):
@@ -276,69 +306,55 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.warning("Bark 推送调用失败: %s", e)
 
-    def _on_status(self, text):
-        self.trend_view.set_status(text)
+    def _on_status(self, text: str) -> None:
+        self.statusBar().showMessage(text)
 
-    def _on_backfill_progress(self, done: int, total: int):
-        """补齐进度条，结束后全量刷新一次 UI."""
+    def _on_backfill_progress(self, done: int, total: int) -> None:
         if total <= 0:
+            self.backfill_bar.setVisible(False)
             return
         pct = int(done * 100 / total)
-        self.statusBar().showMessage(f"历史补齐: {done}/{total} ({pct}%)")
+        self.backfill_bar.setVisible(True)
+        self.backfill_bar.setValue(pct)
+        self.statusBar().showMessage(f"历史补齐  {done}/{total}  ({pct}%)")
         if done >= total:
-            # 补齐完成后做一次全量 UI 刷新
+            # 结束：延迟 1 秒后隐藏进度条，全量刷新一次
+            QTimer.singleShot(1000, lambda: self.backfill_bar.setVisible(False))
             try:
                 self._refresh_all()
             except Exception:
                 pass
 
-    def _on_error(self, text):
+    def _on_error(self, text: str) -> None:
         self._set_network(False)
-        self.statusBar().showMessage(f"⚠ {text}", 8000)
+        self.statusBar().showMessage(f"⚠  {text}", 8000)
 
-    def _on_settings_saved(self, cfg: AppConfig):
+    def _on_settings_saved(self, cfg: AppConfig) -> None:
         self.cfg = cfg
         try:
             save_config(cfg)
         except Exception as e:
-            QMessageBox.warning(self, "保存失败", str(e)); return
+            QMessageBox.warning(self, "保存失败", str(e))
+            return
         self.monitor.update_config(cfg)
         self.alerter.update_config(cfg.alert)
         self.predictor.update_config(cfg.predictor)
         self.statusBar().showMessage("设置已保存", 3000)
 
-    # ==================== 模拟 ====================
-    def _sim_start(self):
-        self.simulator.update_config(self.sim_panel.collect_config())
-        self.simulator.start()
-        self.sim_panel.btn_start.setEnabled(False); self.sim_panel.btn_stop.setEnabled(True)
-
-    def _sim_stop(self):
-        self.simulator.stop()
-        self.sim_panel.btn_start.setEnabled(True); self.sim_panel.btn_stop.setEnabled(False)
-
-    def _sim_reset(self):
-        self.simulator.reset(self.sim_panel.collect_config())
-        self.sim_panel.refresh(self.simulator.state)
-        self.sim_panel.update_curve(self.simulator.balance_curve())
-
-    # ==================== 全量刷新 ====================
-    def _refresh_all(self):
-        history = self.analyzer.history()
+    # ====================== 全量刷新 ======================
+    def _refresh_all(self) -> None:
         s = self.analyzer.stats
-        self.trend_view.apply_periods(history, s.odd_total, s.even_total)
-        self.trend_view.refresh(self.analyzer)
-        self.data_table.refresh(self.analyzer)
-        self.lbl_total.setText(f"{s.total} 期")
-        # 总是调用预测器，让用户立刻看到"观察中"反馈；Predictor 内部自己判断数据是否足够
+        self.lbl_total.setText(str(s.total))
+        self.dashboard.apply_history(self.analyzer)
+        # Predictor 内部自己判断数据是否足够
         self._last_prediction = self.predictor.predict(self.analyzer)
-        self.prob_panel.refresh(self.analyzer, self._last_prediction, self.tracker)
-        self.trend_view.update_ai_signal(self._last_prediction)
+        self.dashboard.refresh_all(self.analyzer, self._last_prediction, self.tracker)
 
-    def closeEvent(self, event):
+    # ====================== 关闭 ======================
+    def closeEvent(self, event) -> None:
         self._countdown_timer.stop()
         try: self.monitor.stop()
-        except: pass
+        except Exception: pass
         try: self.storage.close()
-        except: pass
+        except Exception: pass
         super().closeEvent(event)
