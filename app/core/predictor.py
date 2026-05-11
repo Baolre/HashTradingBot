@@ -347,8 +347,9 @@ class Predictor:
                     {"role": "user", "content": user_msg},
                 ],
                 "temperature": cfg.temperature,
-                "max_tokens": 100,
+                "max_tokens": 150,
                 "stream": False,
+                "response_format": {"type": "json_object"},
             }
 
             with httpx.Client(timeout=cfg.timeout) as client:
