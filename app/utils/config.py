@@ -37,6 +37,9 @@ class AlertConfig:
     alternation_enabled: bool = True
     alternation_threshold: int = 6
     cooldown_periods: int = 3
+    # 交叉预警的通知方式
+    sound_enabled: bool = True
+    bark_enabled: bool = True
 
 
 @dataclass

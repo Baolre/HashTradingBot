@@ -250,6 +250,32 @@ class MainWindow(QMainWindow):
             self._update_alert_badge()
         self.alert_panel.show_popup(event, self)
 
+        # 交叉预警 → 声音 + 手机推送
+        if getattr(event, "kind", "") == "alternation":
+            try:
+                if getattr(self.cfg.alert, "sound_enabled", True):
+                    self.notifier.beep()
+            except Exception as e:
+                logger.warning("声音提醒失败: %s", e)
+            try:
+                if getattr(self.cfg.alert, "bark_enabled", True) and self.cfg.push.bark_key:
+                    block_no = event.block_number or "-"
+                    url = (
+                        f"https://tronscan.org/#/block/{event.block_number}"
+                        if event.block_number else ""
+                    )
+                    self.notifier.push_bark(
+                        title=f"交叉预警 (#{block_no})",
+                        body=event.message,
+                        key=self.cfg.push.bark_key,
+                        server=self.cfg.push.bark_server or "https://api.day.app",
+                        sound=self.cfg.push.bark_sound or "alarm",
+                        group=self.cfg.push.bark_group or "hash_alert",
+                        url=url,
+                    )
+            except Exception as e:
+                logger.warning("Bark 推送调用失败: %s", e)
+
     def _on_status(self, text):
         self.trend_view.set_status(text)
 
