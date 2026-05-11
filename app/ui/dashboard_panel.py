@@ -437,7 +437,7 @@ class MetricStrip(QFrame):
 # ==================== 最近开奖对照表 ====================
 
 class RecentBlocksCard(Card):
-    """最近 N 期的：区块号 / 末位 / 实际 / AI 预测 / 置信度 / 命中."""
+    """最近 N 期的：区块号 / 末位 / 实际 / AI 预测 / 置信度 / 命中 + 底部统计."""
 
     def __init__(self, parent=None):
         super().__init__("最近开奖 & AI 对照（上 = 最新）", parent=parent)
@@ -450,6 +450,12 @@ class RecentBlocksCard(Card):
         self.tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tbl.setSelectionMode(QTableWidget.NoSelection)
         body.addWidget(self.tbl)
+
+        # 底部统计行
+        self.lbl_stats = QLabel("")
+        self.lbl_stats.setObjectName("mutedSmall")
+        self.lbl_stats.setWordWrap(True)
+        body.addWidget(self.lbl_stats)
 
     def refresh(self, analyzer: Analyzer, tracker) -> None:
         periods = list(reversed(analyzer.last(40)))  # 最新在上
@@ -493,6 +499,19 @@ class RecentBlocksCard(Card):
                 self.tbl.setItem(row_i, 3, _cell("-"))
                 self.tbl.setItem(row_i, 4, _cell("-"))
                 self.tbl.setItem(row_i, 5, _cell("-"))
+
+        # 底部统计：高置信命中率 + 高置信最大连错
+        if tracker is not None:
+            st = tracker.get_stats("ensemble")
+            if st.hc_total > 0:
+                self.lbl_stats.setText(
+                    f"高置信命中率: {st.hc_accuracy_pct} ({st.hc_correct}/{st.hc_total})  |  "
+                    f"高置信最大连错: {st.hc_max_wrong_streak}"
+                )
+            else:
+                self.lbl_stats.setText("尚无高置信预测记录")
+        else:
+            self.lbl_stats.setText("")
 
 
 # ==================== 分析卡（矩阵 + 频率） ====================
@@ -693,18 +712,18 @@ class DashboardPanel(QWidget):
         left_splitter.setStretchFactor(0, 3)
         left_splitter.setStretchFactor(1, 2)
 
-        # 右列：AI + 命中率 + 对照表
+        # 右列：AI + 对照表
         right_splitter = QSplitter(Qt.Vertical)
         right_splitter.setChildrenCollapsible(False)
         self.ai_card = AICard()
-        self.accuracy_card = AccuracyCard()
         self.recent_card = RecentBlocksCard()
         right_splitter.addWidget(self.ai_card)
-        right_splitter.addWidget(self.accuracy_card)
         right_splitter.addWidget(self.recent_card)
         right_splitter.setStretchFactor(0, 3)
-        right_splitter.setStretchFactor(1, 3)
-        right_splitter.setStretchFactor(2, 5)
+        right_splitter.setStretchFactor(1, 5)
+
+        # AccuracyCard 保留实例（后端不动）但不显示
+        self.accuracy_card = AccuracyCard()
 
         splitter.addWidget(left_splitter)
         splitter.addWidget(right_splitter)
