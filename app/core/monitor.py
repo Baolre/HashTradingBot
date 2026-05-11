@@ -203,6 +203,7 @@ class MonitorWorker(QObject):
             return
         info = self._client.get_block_by_num(num)
         if info is None or not info.hash:
+            logger.warning("取区块 #%s 失败", num)
             self.error_occurred.emit(f"取区块 #{num} 失败")
             return
         period: Period = self.analyzer.build_period(
@@ -217,6 +218,9 @@ class MonitorWorker(QObject):
             except Exception as e:  # noqa: BLE001
                 logger.warning("保存区块失败: %s", e)
 
+        logger.info("新区块 #%s 末位=%s %s (总 %d 期)",
+                    period.block_number, period.digit, period.parity_label,
+                    self.analyzer.stats.total)
         self.block_received.emit(period)
         # 触发预警检查
         self.alerter.check(self.analyzer, period)

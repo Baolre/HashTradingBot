@@ -360,6 +360,8 @@ class Predictor:
         """带超时的异步包装：提交到线程池，最多等 timeout 秒."""
         cfg = self.deepseek_cfg
         if cfg is None or not cfg.enabled or not cfg.api_key:
+            if cfg is not None and cfg.enabled and not cfg.api_key:
+                logger.info("DeepSeek 跳过：未配置 API Key")
             return None
 
         try:
@@ -434,6 +436,9 @@ class Predictor:
             next_block_number=next_block,
         )
         has = conf >= float(self.cfg.confidence_threshold)
+        models_str = "+".join(s.model for s in signals)
+        logger.info("预测: %s conf=%.2f models=[%s] has_signal=%s",
+                    best.label, conf, models_str, has)
         return Prediction(
             signals=signals,
             best=best,
