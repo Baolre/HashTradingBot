@@ -17,9 +17,10 @@ from typing import Dict, List, Optional, Tuple
 import httpx
 
 from ..utils.config import DeepSeekConfig, PredictorConfig
+from ..utils.logger import get_logger
 from .analyzer import Analyzer, PARITY_EVEN, PARITY_ODD, PARITY_UNKNOWN
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # DeepSeek 调用用的线程池（全局单例，避免重复创建线程）
 _deepseek_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="deepseek")
