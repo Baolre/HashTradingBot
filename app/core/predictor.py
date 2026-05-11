@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
@@ -170,6 +172,9 @@ class Predictor:
         # DeepSeek 最后一次有效返回（缓存，当 API 超时/失败时用旧结果）
         self._deepseek_last_signal: Optional[Signal] = None
         self._deepseek_lock = threading.Lock()
+        # DeepSeek 调用频率控制：最少间隔 10 秒，避免频繁请求被限流
+        self._deepseek_min_interval = 10.0  # 秒
+        self._deepseek_last_call_time: float = 0.0
 
     def update_config(self, cfg: PredictorConfig) -> None:
         self.cfg = cfg
@@ -259,6 +264,55 @@ class Predictor:
 
     # ==================== DeepSeek V4 Flash ====================
 
+    @staticmethod
+    def _extract_json(text: str) -> Optional[dict]:
+        """从 DeepSeek 返回的文本中健壮提取 JSON 对象.
+
+        支持以下格式：
+        1. 纯 JSON: {"prediction": 1, ...}
+        2. markdown 包裹: ```json\n{...}\n```
+        3. JSON 前后有多余文字: "分析如下\n{...}\n以上"
+        4. 带思考标签: <think>...</think>\n{...}
+        """
+        if not text:
+            return None
+
+        # 1) 尝试直接解析
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 2) 尝试从 markdown 代码块提取
+        if "```" in text:
+            parts = text.split("```")
+            for part in parts[1::2]:  # 取奇数段（代码块内容）
+                cleaned = part.strip()
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:].strip()
+                try:
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    continue
+
+        # 3) 尝试用正则找第一个 {...} 对象
+        match = re.search(r'\{[^{}]*"prediction"[^{}]*\}', text)
+        if match:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                pass
+
+        # 4) 更宽松：找任意 {...}
+        match = re.search(r'\{[^{}]+\}', text)
+        if match:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
     def _deepseek_call(self, analyzer: Analyzer) -> Optional[Signal]:
         """同步调用 DeepSeek API（在线程池中运行）."""
         cfg = self.deepseek_cfg
@@ -303,13 +357,17 @@ class Predictor:
                 data = resp.json()
 
             # 解析回复
-            content = data["choices"][0]["message"]["content"].strip()
-            # 尝试提取 JSON（可能被 markdown 包裹）
-            if "```" in content:
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-            result = json.loads(content)
+            content = data["choices"][0]["message"]["content"]
+            if not content or not content.strip():
+                logger.warning("DeepSeek 返回空 content (model=%s)", cfg.model)
+                return None
+            content = content.strip()
+
+            # 健壮的 JSON 提取：处理多种返回格式
+            result = self._extract_json(content)
+            if result is None:
+                logger.warning("DeepSeek 返回内容无法提取 JSON: %s", content[:100])
+                return None
 
             pred_val = int(result.get("prediction", -1))
             conf = float(result.get("confidence", 0.5))
@@ -364,6 +422,13 @@ class Predictor:
             if cfg is not None and cfg.enabled and not cfg.api_key:
                 logger.info("DeepSeek 跳过：未配置 API Key")
             return None
+
+        # 频率控制：距上次调用不足 min_interval 秒则跳过，使用缓存结果
+        now = time.time()
+        if now - self._deepseek_last_call_time < self._deepseek_min_interval:
+            with self._deepseek_lock:
+                return self._deepseek_last_signal
+        self._deepseek_last_call_time = now
 
         try:
             future = _deepseek_pool.submit(self._deepseek_call, analyzer)
