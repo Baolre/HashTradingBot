@@ -59,16 +59,10 @@ class SettingsPanel(QWidget):
         self.sp_alt_threshold.setValue(cfg.alert.alternation_threshold)
         self.sp_cooldown = QSpinBox(); self.sp_cooldown.setRange(0, 50)
         self.sp_cooldown.setValue(cfg.alert.cooldown_periods)
-        self.cb_sound = QCheckBox("声音提示")
-        self.cb_sound.setChecked(cfg.alert.sound_enabled)
-        self.cb_toast = QCheckBox("桌面通知")
-        self.cb_toast.setChecked(cfg.alert.toast_enabled)
 
         form_alert.addRow(self.cb_alt)
         form_alert.addRow("交叉触发阈值:", self.sp_alt_threshold)
         form_alert.addRow("触发冷却(期):", self.sp_cooldown)
-        form_alert.addRow(self.cb_sound)
-        form_alert.addRow(self.cb_toast)
         root.addWidget(grp_alert)
 
         # 按钮
@@ -92,8 +86,6 @@ class SettingsPanel(QWidget):
         cfg.alert.alternation_enabled = self.cb_alt.isChecked()
         cfg.alert.alternation_threshold = int(self.sp_alt_threshold.value())
         cfg.alert.cooldown_periods = int(self.sp_cooldown.value())
-        cfg.alert.sound_enabled = self.cb_sound.isChecked()
-        cfg.alert.toast_enabled = self.cb_toast.isChecked()
         return cfg
 
     def _on_save(self) -> None:

@@ -36,13 +36,7 @@ class AnalyzerConfig:
 class AlertConfig:
     alternation_enabled: bool = True
     alternation_threshold: int = 6
-    streak_enabled: bool = True
-    streak_threshold: int = 6
-    miss_enabled: bool = True
-    miss_threshold: int = 10
     cooldown_periods: int = 3
-    sound_enabled: bool = True
-    toast_enabled: bool = True
 
 
 @dataclass

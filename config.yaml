@@ -27,10 +27,6 @@ alert:
   alternation_threshold: 6
   # 触发后多少期内不再重复提醒（防骚扰）
   cooldown_periods: 3
-  # 声音提醒
-  sound_enabled: true
-  # 桌面通知
-  toast_enabled: true
 
 storage:
   # SQLite 文件路径

@@ -231,10 +231,6 @@ class MainWindow(QMainWindow):
             self._alert_unread += 1
             self._update_alert_badge()
         self.alert_panel.show_popup(event, self)
-        if self.cfg.alert.toast_enabled:
-            self.notifier.toast("预警", event.message)
-        if self.cfg.alert.sound_enabled:
-            self.notifier.beep()
 
     def _on_status(self, text):
         self.trend_view.set_status(text)
