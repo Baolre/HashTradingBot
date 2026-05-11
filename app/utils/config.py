@@ -53,6 +53,20 @@ class PredictorConfig:
 
 
 @dataclass
+class DeepSeekConfig:
+    enabled: bool = True
+    api_key: str = ""
+    base_url: str = "https://api.deepseek.com"
+    model: str = "deepseek-v4-flash"
+    timeout: int = 15
+    # 发送给 LLM 的最近期数（利用缓存，固定前缀越长越好）
+    max_history: int = 100
+    # DeepSeek 预测在 ensemble 中的权重（本地模型各为 1.0）
+    weight: float = 1.5
+    temperature: float = 0.1
+
+
+@dataclass
 class SimConfig:
     initial_balance: float = 10000.0
     base_bet: float = 100.0
@@ -96,6 +110,7 @@ class AppConfig:
     analyzer: AnalyzerConfig = field(default_factory=AnalyzerConfig)
     alert: AlertConfig = field(default_factory=AlertConfig)
     predictor: PredictorConfig = field(default_factory=PredictorConfig)
+    deepseek: DeepSeekConfig = field(default_factory=DeepSeekConfig)
     sim: SimConfig = field(default_factory=SimConfig)
     backfill: BackfillConfig = field(default_factory=BackfillConfig)
     push: PushConfig = field(default_factory=PushConfig)
@@ -111,6 +126,7 @@ class AppConfig:
             analyzer=AnalyzerConfig(**(data.get("analyzer") or {})),
             alert=AlertConfig(**(data.get("alert") or {})),
             predictor=PredictorConfig(**(data.get("predictor") or {})),
+            deepseek=DeepSeekConfig(**(data.get("deepseek") or {})),
             sim=SimConfig(**(data.get("sim") or {})),
             backfill=BackfillConfig(**(data.get("backfill") or {})),
             push=PushConfig(**(data.get("push") or {})),

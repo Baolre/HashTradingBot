@@ -71,6 +71,34 @@ class SettingsPanel(QWidget):
         form_alert.addRow(self.cb_bark)
         root.addWidget(grp_alert)
 
+        # DeepSeek AI 预测
+        grp_ds = QGroupBox("DeepSeek V4 Flash AI 预测")
+        form_ds = QFormLayout(grp_ds)
+        self.cb_ds_enabled = QCheckBox("启用 DeepSeek AI 预测模型")
+        self.cb_ds_enabled.setChecked(getattr(cfg.deepseek, "enabled", True))
+        self.ed_ds_key = QLineEdit(getattr(cfg.deepseek, "api_key", ""))
+        self.ed_ds_key.setEchoMode(QLineEdit.Password)
+        self.ed_ds_key.setPlaceholderText("在 platform.deepseek.com 获取 API Key")
+        self.ed_ds_base_url = QLineEdit(getattr(cfg.deepseek, "base_url", "https://api.deepseek.com"))
+        self.ed_ds_model = QLineEdit(getattr(cfg.deepseek, "model", "deepseek-v4-flash"))
+        self.sp_ds_timeout = QSpinBox(); self.sp_ds_timeout.setRange(5, 60)
+        self.sp_ds_timeout.setValue(getattr(cfg.deepseek, "timeout", 15))
+        self.sp_ds_timeout.setSuffix(" 秒")
+        self.sp_ds_history = QSpinBox(); self.sp_ds_history.setRange(20, 500)
+        self.sp_ds_history.setValue(getattr(cfg.deepseek, "max_history", 100))
+        self.sp_ds_history.setSuffix(" 期")
+
+        form_ds.addRow(self.cb_ds_enabled)
+        form_ds.addRow("API Key:", self.ed_ds_key)
+        form_ds.addRow("Base URL:", self.ed_ds_base_url)
+        form_ds.addRow("模型:", self.ed_ds_model)
+        form_ds.addRow("超时:", self.sp_ds_timeout)
+        form_ds.addRow("历史期数:", self.sp_ds_history)
+        form_ds.addRow(QLabel(
+            "<span style='color:#8B949E'>利用上下文缓存，token 消耗极低（~¥0.15/天）</span>"
+        ))
+        root.addWidget(grp_ds)
+
         # Bark 手机推送
         grp_push = QGroupBox("Bark 手机推送（iOS）")
         form_push = QFormLayout(grp_push)
@@ -127,6 +155,12 @@ class SettingsPanel(QWidget):
         cfg.push.bark_server = self.ed_bark_server.text().strip() or "https://api.day.app"
         cfg.push.bark_sound = self.cb_bark_sound.currentText().strip() or "alarm"
         cfg.push.bark_group = self.ed_bark_group.text().strip() or "hash_alert"
+        cfg.deepseek.enabled = self.cb_ds_enabled.isChecked()
+        cfg.deepseek.api_key = self.ed_ds_key.text().strip()
+        cfg.deepseek.base_url = self.ed_ds_base_url.text().strip() or "https://api.deepseek.com"
+        cfg.deepseek.model = self.ed_ds_model.text().strip() or "deepseek-v4-flash"
+        cfg.deepseek.timeout = int(self.sp_ds_timeout.value())
+        cfg.deepseek.max_history = int(self.sp_ds_history.value())
         return cfg
 
     def _on_save(self) -> None:

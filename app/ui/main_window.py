@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
         self.storage = Storage(cfg.storage.db_path)
         self.analyzer = Analyzer(max_history=cfg.analyzer.max_history)
         self.alerter = Alerter(cfg.alert)
-        self.predictor = Predictor(cfg.predictor)
+        self.predictor = Predictor(cfg.predictor, deepseek_cfg=cfg.deepseek)
         self.tracker = PredictionTracker(
             max_history=max(1000, cfg.analyzer.max_history)
         )
@@ -339,6 +339,7 @@ class MainWindow(QMainWindow):
         self.monitor.update_config(cfg)
         self.alerter.update_config(cfg.alert)
         self.predictor.update_config(cfg.predictor)
+        self.predictor.update_deepseek_config(cfg.deepseek)
         self.statusBar().showMessage("设置已保存", 3000)
 
     # ====================== 全量刷新 ======================
