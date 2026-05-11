@@ -100,7 +100,7 @@ class AICard(Card):
         self.lbl_reason.setWordWrap(True)
         body.addWidget(self.lbl_reason)
 
-        # 下：各模型小表
+        # 下：各模型小表（隐藏，数据仍在后端刷新）
         self.tbl_models = QTableWidget(0, 3)
         self.tbl_models.setHorizontalHeaderLabels(["模型", "方向", "置信度"])
         self.tbl_models.horizontalHeader().setStretchLastSection(True)
@@ -108,7 +108,7 @@ class AICard(Card):
         self.tbl_models.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tbl_models.setSelectionMode(QTableWidget.NoSelection)
         self.tbl_models.setFixedHeight(130)
-        body.addWidget(self.tbl_models)
+        self.tbl_models.setVisible(False)
 
     def update_prediction(self, prediction) -> None:
         best = getattr(prediction, "best", None) if prediction is not None else None
