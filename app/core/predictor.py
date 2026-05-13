@@ -354,6 +354,11 @@ class Predictor:
 
             with httpx.Client(timeout=cfg.timeout) as client:
                 resp = client.post(url, headers=headers, json=payload)
+                # 如果中转站不支持 response_format，去掉后重试
+                if resp.status_code == 400:
+                    logger.info("中转站不支持 response_format，去掉后重试")
+                    payload.pop("response_format", None)
+                    resp = client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
 
