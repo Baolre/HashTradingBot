@@ -66,7 +66,8 @@ deepseek:
   enabled: true
   api_key: ""
   base_url: "http://heibai.natapp1.cc"
-  model: "deepseek-v4-flash"
+  # 中转站可能不需要指定模型名，留空则不传 model 字段
+  model: ""
   # API 调用超时（秒）
   timeout: 15
   # 发送给 LLM 的最近期数（利用上下文缓存，前缀越稳定缓存命中率越高）

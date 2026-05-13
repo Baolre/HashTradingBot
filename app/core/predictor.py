@@ -341,7 +341,6 @@ class Predictor:
                 "Content-Type": "application/json",
             }
             payload = {
-                "model": cfg.model,
                 "messages": [
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg},
@@ -351,6 +350,9 @@ class Predictor:
                 "stream": False,
                 "response_format": {"type": "json_object"},
             }
+            # model 字段：如果配置了就传，中转站可能不需要
+            if cfg.model:
+                payload["model"] = cfg.model
 
             with httpx.Client(timeout=cfg.timeout) as client:
                 resp = client.post(url, headers=headers, json=payload)
