@@ -175,6 +175,8 @@ class Predictor:
         # DeepSeek 调用频率控制：最少间隔 10 秒，避免频繁请求被限流
         self._deepseek_min_interval = 10.0  # 秒
         self._deepseek_last_call_time: float = 0.0
+        # 是否正在进行 DeepSeek 后台请求（避免并发重复请求）
+        self._deepseek_in_flight: bool = False
 
     def update_config(self, cfg: PredictorConfig) -> None:
         self.cfg = cfg
@@ -424,32 +426,40 @@ class Predictor:
             return None
 
     def _deepseek(self, analyzer: Analyzer) -> Optional[Signal]:
-        """带超时的异步包装：提交到线程池，最多等 timeout 秒."""
+        """异步非阻塞：立即返回缓存结果，后台异步刷新下一次的预测.
+
+        关键：不再阻塞 UI 主线程。首次调用时缓存为空，返回 None；
+        之后每次调用都返回上次的预测结果，同时后台已经发起新请求。
+        """
         cfg = self.deepseek_cfg
         if cfg is None or not cfg.enabled or not cfg.api_key:
             if cfg is not None and cfg.enabled and not cfg.api_key:
                 logger.info("DeepSeek 跳过：未配置 API Key")
             return None
 
-        # 频率控制：距上次调用不足 min_interval 秒则跳过，使用缓存结果
+        # 频率控制 + 避免并发重复提交
         now = time.time()
-        if now - self._deepseek_last_call_time < self._deepseek_min_interval:
-            with self._deepseek_lock:
-                return self._deepseek_last_signal
-        self._deepseek_last_call_time = now
+        should_submit = (
+            not self._deepseek_in_flight
+            and (now - self._deepseek_last_call_time >= self._deepseek_min_interval)
+        )
+        if should_submit:
+            self._deepseek_last_call_time = now
+            self._deepseek_in_flight = True
+            _deepseek_pool.submit(self._deepseek_task, analyzer)
 
+        # 立即返回上次缓存结果（可能为 None）
+        with self._deepseek_lock:
+            return self._deepseek_last_signal
+
+    def _deepseek_task(self, analyzer: Analyzer) -> None:
+        """后台线程任务：调用 API 并更新缓存，完成后清除 in_flight 标志."""
         try:
-            future = _deepseek_pool.submit(self._deepseek_call, analyzer)
-            result = future.result(timeout=cfg.timeout + 2)
-            return result
-        except FutureTimeout:
-            logger.warning("DeepSeek 线程池超时，使用缓存结果")
-            with self._deepseek_lock:
-                return self._deepseek_last_signal
+            self._deepseek_call(analyzer)
         except Exception as e:  # noqa: BLE001
-            logger.warning("DeepSeek 线程池异常: %s", e)
-            with self._deepseek_lock:
-                return self._deepseek_last_signal
+            logger.warning("DeepSeek 后台任务异常: %s", e)
+        finally:
+            self._deepseek_in_flight = False
 
     # ==================== 集成预测 ====================
 
