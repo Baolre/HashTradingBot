@@ -461,7 +461,8 @@ class RecentBlocksCard(Card):
         periods = list(reversed(analyzer.last(200)))  # 最新在上
         rec_list = []
         if tracker is not None:
-            rec_list = [r for r in tracker.recent(200) if r.model == "ensemble"]
+            # 取足够多的记录再过滤，因为每期会存多个模型的记录
+            rec_list = [r for r in tracker.recent(1000) if r.model == "ensemble"][-200:]
         self.tbl.setRowCount(len(periods))
         for row_i, p in enumerate(periods):
             # 区块号
