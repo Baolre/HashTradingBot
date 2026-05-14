@@ -65,7 +65,7 @@ deepseek:
   # DeepSeek AI 预测（OpenAI 兼容 API / 中转站）
   enabled: true
   api_key: ""
-  base_url: "http://heibai.natapp1.cc/v1"
+  base_url: "http://heibai.natapp1.cc/v1/chat/completions"
   model: "GPT-5.4"
   # API 调用超时（秒）
   timeout: 15
