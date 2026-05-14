@@ -458,7 +458,7 @@ class RecentBlocksCard(Card):
         body.addWidget(self.lbl_stats)
 
     def refresh(self, analyzer: Analyzer, tracker) -> None:
-        periods = list(reversed(analyzer.last(40)))  # 最新在上
+        periods = list(reversed(analyzer.last(200)))  # 最新在上
         rec_list = []
         if tracker is not None:
             rec_list = [r for r in tracker.recent(200) if r.model == "ensemble"]

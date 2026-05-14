@@ -62,12 +62,11 @@ ui:
   column_gap: 6
 
 deepseek:
-  # DeepSeek V4 Flash AI 预测（OpenAI 兼容 API）
+  # DeepSeek AI 预测（OpenAI 兼容 API / 中转站）
   enabled: true
   api_key: ""
-  base_url: "http://heibai.natapp1.cc"
-  # 中转站可能不需要指定模型名，留空则不传 model 字段
-  model: ""
+  base_url: "http://heibai.natapp1.cc/v1"
+  model: "GPT-5.4"
   # API 调用超时（秒）
   timeout: 15
   # 发送给 LLM 的最近期数（利用上下文缓存，前缀越稳定缓存命中率越高）

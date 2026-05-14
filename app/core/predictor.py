@@ -337,7 +337,12 @@ class Predictor:
         user_msg = _build_user_prompt(sequence, recent_accuracy=recent_acc)
 
         try:
-            url = f"{cfg.base_url.rstrip('/')}/v1/chat/completions"
+            # 智能拼接 URL：如果 base_url 已包含 /v1 则只加 /chat/completions
+            base = cfg.base_url.rstrip('/')
+            if base.endswith('/v1'):
+                url = f"{base}/chat/completions"
+            else:
+                url = f"{base}/v1/chat/completions"
             headers = {
                 "Authorization": f"Bearer {cfg.api_key}",
                 "Content-Type": "application/json",
