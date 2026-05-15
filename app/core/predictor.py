@@ -68,6 +68,7 @@ class DynamicWeights:
             "frequency": 0.8,
             "streak": 1.0,
             "alternation": 1.0,
+            "bayesian": 1.3,
         }
         self._history: Dict[str, List[bool]] = defaultdict(list)
         self._max_history = 50
@@ -244,6 +245,57 @@ class Predictor:
         direction = PARITY_EVEN if latest.parity == PARITY_ODD else PARITY_ODD
         return Signal(direction, conf, model="alternation", reason=f"交替{alt_len}期")
 
+    def _bayesian(self, analyzer: Analyzer) -> Optional[Signal]:
+        """贝叶斯推断：基于先验(历史基准) + 近期证据动态更新后验概率.
+
+        原理：
+        - 先验: 全局单双比例（如 50.2% vs 49.8%）
+        - 似然: 近 20 期的单双比例作为最新证据
+        - 后验: prior * likelihood 归一化
+        置信度取决于后验偏离 0.5 的程度。
+        """
+        history = [p for p in analyzer.last(200) if p.is_valid]
+        if len(history) < 30:
+            return None
+
+        # 先验：全局比例
+        total_all = len(history)
+        odd_all = sum(1 for p in history if p.is_odd)
+        prior_odd = odd_all / total_all
+        prior_even = 1.0 - prior_odd
+
+        # 似然：最近 20 期的比例（近期趋势）
+        recent = history[-20:]
+        odd_recent = sum(1 for p in recent if p.is_odd)
+        total_recent = len(recent)
+        # 拉普拉斯平滑，避免 0 概率
+        likelihood_odd = (odd_recent + 1) / (total_recent + 2)
+        likelihood_even = 1.0 - likelihood_odd
+
+        # 后验 = prior * likelihood（未归一化）
+        post_odd = prior_odd * likelihood_odd
+        post_even = prior_even * likelihood_even
+
+        # 归一化
+        post_total = post_odd + post_even
+        if post_total == 0:
+            return None
+        post_odd /= post_total
+        post_even /= post_total
+
+        # 置信度：后验偏离 0.5 的程度映射到 [0.5, 0.8]
+        bias = abs(post_odd - 0.5)  # 0~0.5
+        conf = 0.5 + bias * 0.6  # 映射到 0.5~0.8
+        conf = min(0.80, max(0.50, conf))
+
+        if post_odd > post_even:
+            return Signal(PARITY_ODD, conf, model="bayesian",
+                          reason=f"后验P(单)={post_odd:.2f}")
+        elif post_even > post_odd:
+            return Signal(PARITY_EVEN, conf, model="bayesian",
+                          reason=f"后验P(双)={post_even:.2f}")
+        return None
+
     # ==================== 集成预测 ====================
 
     def predict(self, analyzer: Analyzer) -> Prediction:
@@ -264,6 +316,7 @@ class Predictor:
             self._frequency(analyzer),
             self._streak(analyzer),
             self._alternation(analyzer),
+            self._bayesian(analyzer),
         ):
             if sig is not None:
                 signals.append(sig)
