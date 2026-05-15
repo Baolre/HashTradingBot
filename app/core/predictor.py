@@ -367,6 +367,13 @@ class Predictor:
                 resp.raise_for_status()
                 data = resp.json()
 
+            # 检查返回格式是否正确
+            if "choices" not in data or not data["choices"]:
+                # 中转站可能返回了错误信息（余额不足/鉴权失败/模型不存在等）
+                err_msg = data.get("error", {}).get("message", "") if isinstance(data.get("error"), dict) else str(data)
+                logger.warning("中转站返回异常（无 choices）: %s", err_msg[:200])
+                return None
+
             # 解析回复
             content = data["choices"][0]["message"]["content"]
             if not content or not content.strip():
